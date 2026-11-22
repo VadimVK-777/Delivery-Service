@@ -163,3 +163,13 @@ async def test_support_limit(client: Any, csrf: Any, resources: Any) -> None:
     assert (
         await client.post("/api/v1/support/questions", json={"question": "Ноутбук?"}, headers=csrf)
     ).status_code == 429
+
+
+async def test_html_health_and_metrics(client: Any, csrf: Any, resources: Any) -> None:
+    assert "PARCEL" in (await client.get("/")).text
+    assert (await client.get("/static/app.js")).status_code == 200
+    assert (await client.get("/web/parcels?type_id=999")).status_code == 422
+    owner = await owner_from_registration(client, csrf, resources)
+    parcel_id = await seed(resources, owner)
+    assert "Laptop" in (await client.get("/web/parcels")).text
+    assert (await client.get(f"/parcels/{parcel_id}")).status_code == 200

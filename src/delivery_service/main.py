@@ -3,6 +3,7 @@
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -10,6 +11,8 @@ import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from sqlalchemy.exc import SQLAlchemyError
@@ -22,8 +25,10 @@ from delivery_service.domain import Problem
 from delivery_service.security import Sessions
 from delivery_service.services import Parcels
 from delivery_service.settings import Settings
+from delivery_service.web import routes as web_routes
 
 logger = logging.getLogger(__name__)
+WEB = Path(__file__).parent / "web"
 
 
 class Resources:
@@ -51,6 +56,7 @@ class Resources:
 def create_app(settings: Settings | None = None, resources: Any = None) -> FastAPI:
     settings = settings or Settings()
     security = Sessions(settings)
+    templates = Jinja2Templates(directory=str(WEB / "templates"))
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -67,6 +73,7 @@ def create_app(settings: Settings | None = None, resources: Any = None) -> FastA
     )
     if resources is not None:
         app.state.resources = resources
+    app.mount("/static", StaticFiles(directory=WEB / "static"), name="static")
 
     def problem_response(request: Request, error: Problem, **extra: Any) -> JSONResponse:
         return JSONResponse(
@@ -125,4 +132,5 @@ def create_app(settings: Settings | None = None, resources: Any = None) -> FastA
         return response
 
     app.include_router(api.create_router(security))
+    app.include_router(web_routes.create_router(security, templates))
     return app
