@@ -1,0 +1,123 @@
+"""Idempotent parcel consumer. ACK follows a durable result or confirmed retry."""
+
+import asyncio
+import logging
+import time
+from uuid import uuid4
+
+import httpx
+from aio_pika.abc import AbstractIncomingMessage
+from redis.asyncio import Redis
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from delivery_service.broker import Broker
+from delivery_service.db import Outbox, Parcel, database, utcnow
+from delivery_service.domain import delivery_cost, reporting_day
+from delivery_service.rates import Rates
+from delivery_service.schemas import ParcelMessage
+from delivery_service.settings import Settings
+
+logger = logging.getLogger(__name__)
+
+
+async def calculate(
+    message: ParcelMessage, sessions: async_sessionmaker[AsyncSession], rates: Rates
+) -> None:
+    """Persist pending registration, then atomically commit calculation and outbox."""
+    started = time.monotonic()
+    async with sessions.begin() as session:
+        await session.execute(
+            insert(Parcel)
+            .values(
+                id=message.id,
+                owner_id=message.owner_id,
+                created_at=message.created_at,
+                status="pending",
+                **message.parcel.model_dump(),
+            )
+            .on_conflict_do_nothing(index_elements=[Parcel.id])
+        )
+        parcel = await session.get(Parcel, message.id)
+        if parcel is None or parcel.owner_id != message.owner_id:
+            raise ValueError("Conflicting message owner")
+        if parcel.status == "calculated":
+            return
+    rate, rate_date = await rates.get()
+    async with sessions.begin() as session:
+        parcel = (
+            await session.execute(select(Parcel).where(Parcel.id == message.id).with_for_update())
+        ).scalar_one()
+        if parcel.status == "calculated":
+            return
+        cost = delivery_cost(parcel.weight_kg, parcel.declared_value_usd, rate)
+        cents = int(cost * 100)
+        if cents > 9223372036854775807:
+            raise ValueError("Delivery cost exceeds reporting integer range")
+        now = utcnow()
+        parcel.delivery_cost_rub = cost
+        parcel.exchange_rate, parcel.rate_date = rate, rate_date
+        parcel.calculated_at, parcel.status = now, "calculated"
+        event_id = uuid4()
+        session.add(
+            Outbox(
+                id=event_id,
+                parcel_id=parcel.id,
+                payload={
+                    "event_id": str(event_id),
+                    "parcel_id": str(parcel.id),
+                    "type_id": parcel.type_id,
+                    "amount_kopecks": cents,
+                    "weight_kg": str(parcel.weight_kg),
+                    "declared_value_usd": str(parcel.declared_value_usd),
+                    "rate": str(rate),
+                    "rate_date": rate_date,
+                    "calculated_at": now.isoformat(),
+                    "day": reporting_day(now),
+                    "formula_version": 1,
+                },
+            )
+        )
+
+    logger.info(
+        "calculation_completed",
+        extra={
+            "parcel_id": str(message.id),
+            "event_id": str(event_id),
+            "duration_ms": round((time.monotonic() - started) * 1000),
+        },
+    )
+
+
+async def consume(
+    incoming: AbstractIncomingMessage,
+    sessions: async_sessionmaker[AsyncSession],
+    rates: Rates,
+    broker: Broker,
+) -> None:
+    async with incoming.process(requeue=True):
+        message = ParcelMessage.model_validate_json(incoming.body)
+        await calculate(message, sessions, rates)
+
+
+async def run(settings: Settings) -> None:
+    engine, sessions = database(settings.database_url)
+    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    broker = Broker(settings)
+    try:
+        async with httpx.AsyncClient() as http:
+            rates = Rates(redis, http, settings)
+            await broker.connect()
+            if broker.queue is None:
+                raise RuntimeError("Queue unavailable")
+
+            async def handler(incoming: AbstractIncomingMessage) -> None:
+                await consume(incoming, sessions, rates, broker)
+
+            await broker.queue.consume(handler)
+            await asyncio.Future()
+    finally:
+        await broker.close()
+        await redis.aclose()
+        await engine.dispose()

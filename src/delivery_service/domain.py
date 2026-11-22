@@ -1,6 +1,8 @@
 """Pure delivery rules and transport-independent errors."""
 
+from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
+from zoneinfo import ZoneInfo
 
 
 class Problem(Exception):
@@ -16,3 +18,9 @@ def delivery_cost(weight: Decimal, value: Decimal, rate: Decimal) -> Decimal:
     return ((weight * Decimal("0.5") + value * Decimal("0.01")) * rate).quantize(
         Decimal("0.01"), rounding=ROUND_HALF_UP
     )
+
+
+def reporting_day(calculated_at: datetime) -> str:
+    if calculated_at.tzinfo is None:
+        raise ValueError("Timezone-aware timestamp required")
+    return calculated_at.astimezone(ZoneInfo("Europe/Moscow")).date().isoformat()

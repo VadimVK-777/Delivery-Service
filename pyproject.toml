@@ -22,6 +22,9 @@ dependencies = [
 [tool.poetry]
 packages = [{include = "delivery_service", from = "src"}]
 
+[project.scripts]
+delivery = "delivery_service.cli:main"
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100

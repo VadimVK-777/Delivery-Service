@@ -1,9 +1,10 @@
+from datetime import datetime
 from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
 
-from delivery_service.domain import delivery_cost
+from delivery_service.domain import delivery_cost, reporting_day
 from delivery_service.schemas import ParcelInput
 
 
@@ -24,6 +25,13 @@ def test_cost(weight: str, value: str, rate: str, expected: str) -> None:
 def test_invalid_cost(weight: int, value: int, rate: int) -> None:
     with pytest.raises(ValueError):
         delivery_cost(Decimal(weight), Decimal(value), Decimal(rate))
+
+
+def test_moscow_day_boundary() -> None:
+    assert reporting_day(datetime.fromisoformat("2026-01-01T20:59:59+00:00")) == "2026-01-01"
+    assert reporting_day(datetime.fromisoformat("2026-01-01T21:00:00+00:00")) == "2026-01-02"
+    with pytest.raises(ValueError):
+        reporting_day(datetime(2026, 1, 1))
 
 
 @pytest.mark.parametrize(
