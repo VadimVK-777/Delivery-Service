@@ -88,6 +88,17 @@ async def test_report_cli_and_discrepancy(db: Any, settings: Any, capsys: Any) -
             await execute(argparse.Namespace(command="verify-report", date="2026-01-01"), settings)
 
 
+async def test_index_cli_closes_resources(settings: Any) -> None:
+    support = AsyncMock()
+    with (
+        patch("delivery_service.rag.Support", return_value=support),
+        patch("delivery_service.cli.Redis.from_url", return_value=AsyncMock()),
+    ):
+        await execute(argparse.Namespace(command="index-knowledge"), settings)
+        support.index.assert_awaited_once()
+        support.close.assert_awaited_once()
+
+
 async def test_dlq_cli(settings: Any, capsys: Any) -> None:
     broker = AsyncMock()
     broker.channel.declare_queue.return_value = SimpleNamespace(
