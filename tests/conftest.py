@@ -49,6 +49,7 @@ def resources(db: Any, redis: Any, settings: Settings) -> SimpleNamespace:
         db=db,
         redis=redis,
         broker=broker,
+        support=AsyncMock(),
         parcels=Parcels(db, redis, broker, settings.session_secret.get_secret_value()),
     )
 

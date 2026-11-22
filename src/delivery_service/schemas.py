@@ -52,3 +52,13 @@ class ParcelMessage(BaseModel):
 class CarrierInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     company_id: int = Field(gt=0, le=9223372036854775807)
+
+
+class Question(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    question: str = Field(min_length=1, max_length=2000)
+
+
+class Answer(BaseModel):
+    answer: str
+    sources: list[str]

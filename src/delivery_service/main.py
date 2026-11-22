@@ -35,8 +35,13 @@ class Resources:
         self.parcels = Parcels(
             self.db, self.redis, self.broker, settings.session_secret.get_secret_value()
         )
+        # ML imports stay outside basic API startup and unit tests.
+        from delivery_service.rag import Support
+
+        self.support = Support(settings, self.redis)
 
     async def close(self) -> None:
+        await self.support.close()
         await self.broker.close()
         await self.http.aclose()
         await self.redis.aclose()
@@ -58,7 +63,7 @@ def create_app(settings: Settings | None = None, resources: Any = None) -> FastA
         title="International Delivery",
         version="1.0.0",
         lifespan=lifespan,
-        description="Анонимные сессии и асинхронная регистрация посылок.",
+        description="Анонимные сессии, асинхронная регистрация посылок и RAG-поддержка.",
     )
     if resources is not None:
         app.state.resources = resources

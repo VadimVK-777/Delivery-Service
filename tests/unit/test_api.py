@@ -4,7 +4,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from delivery_service.db import Parcel
-from delivery_service.schemas import ParcelMessage
+from delivery_service.schemas import Answer, ParcelMessage
 
 DATA = {"name": "Laptop", "weight_kg": "2", "type_id": 2, "declared_value_usd": "100"}
 
@@ -150,3 +150,16 @@ async def test_carrier_token_rotation_and_conflict(client: Any, csrf: Any, resou
     assert (
         await client.put(url + "/carrier", json={"company_id": 0}, headers=headers)
     ).status_code == 422
+
+
+async def test_support_limit(client: Any, csrf: Any, resources: Any) -> None:
+    resources.support.answer.return_value = Answer(answer="Ответ", sources=["rules.md#1"])
+    for _ in range(10):
+        assert (
+            await client.post(
+                "/api/v1/support/questions", json={"question": "Ноутбук?"}, headers=csrf
+            )
+        ).status_code == 200
+    assert (
+        await client.post("/api/v1/support/questions", json={"question": "Ноутбук?"}, headers=csrf)
+    ).status_code == 429

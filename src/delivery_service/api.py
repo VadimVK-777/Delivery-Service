@@ -7,14 +7,21 @@ from fastapi import APIRouter, Header, Query, Request, Response
 from sqlalchemy import select
 
 from delivery_service.db import ParcelType
+from delivery_service.domain import Problem
 from delivery_service.schemas import (
+    Answer,
     CarrierInput,
     ParcelInput,
     ParcelPage,
     ParcelView,
+    Question,
     Registration,
 )
 from delivery_service.security import Sessions
+
+LIMIT = (
+    "local n=redis.call('incr',KEYS[1]); if n==1 then redis.call('expire',KEYS[1],60) end; return n"
+)
 
 
 def create_router(security: Sessions) -> APIRouter:
@@ -85,5 +92,18 @@ def create_router(security: Sessions) -> APIRouter:
             parcel_id, x_assignment_token, data.company_id
         )
         return {"company_id": company}
+
+    @router.post("/support/questions", response_model=Answer, tags=["Support"])
+    async def support_question(
+        request: Request,
+        data: Question,
+        x_csrf_token: Annotated[str | None, Header()] = None,
+    ) -> Any:
+        owner = security.require(request, mutate=True)
+        resource = request.app.state.resources
+        count = await resource.redis.eval(LIMIT, 1, f"support:limit:{owner}")
+        if count > 10:
+            raise Problem(429, "rate_limit", "Не более 10 вопросов в минуту")
+        return await resource.support.answer(data.question)
 
     return router
