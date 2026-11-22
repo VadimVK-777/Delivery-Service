@@ -6,17 +6,21 @@ from contextlib import asynccontextmanager
 from typing import Any
 from uuid import uuid4
 
+import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.exceptions import HTTPException
 
 from delivery_service import api
+from delivery_service.broker import Broker
 from delivery_service.db import database
 from delivery_service.domain import Problem
 from delivery_service.security import Sessions
+from delivery_service.services import Parcels
 from delivery_service.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -25,8 +29,17 @@ logger = logging.getLogger(__name__)
 class Resources:
     def __init__(self, settings: Settings) -> None:
         self.engine, self.db = database(settings.database_url)
+        self.redis = Redis.from_url(settings.redis_url, decode_responses=True)
+        self.http = httpx.AsyncClient(timeout=5)
+        self.broker = Broker(settings)
+        self.parcels = Parcels(
+            self.db, self.redis, self.broker, settings.session_secret.get_secret_value()
+        )
 
     async def close(self) -> None:
+        await self.broker.close()
+        await self.http.aclose()
+        await self.redis.aclose()
         await self.engine.dispose()
 
 

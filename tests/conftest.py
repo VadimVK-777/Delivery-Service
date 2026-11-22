@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import fakeredis.aioredis
 import httpx
@@ -9,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from delivery_service.db import Base, ParcelType, database
 from delivery_service.main import create_app
+from delivery_service.services import Parcels
 from delivery_service.settings import Settings
 
 
@@ -42,9 +44,12 @@ async def redis() -> AsyncIterator[Any]:
 
 @pytest.fixture
 def resources(db: Any, redis: Any, settings: Settings) -> SimpleNamespace:
+    broker = AsyncMock()
     return SimpleNamespace(
         db=db,
         redis=redis,
+        broker=broker,
+        parcels=Parcels(db, redis, broker, settings.session_secret.get_secret_value()),
     )
 
 

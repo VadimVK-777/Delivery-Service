@@ -1,7 +1,9 @@
 """Public and broker contracts; monetary JSON values are decimal strings."""
 
+from datetime import datetime
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -15,3 +17,18 @@ class ParcelInput(BaseModel):
     weight_kg: Weight
     type_id: int = Field(ge=1, le=3)
     declared_value_usd: Money
+
+
+class Registration(BaseModel):
+    id: UUID
+    status: str
+    status_url: str
+
+
+class ParcelMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version: Literal[1] = 1
+    id: UUID
+    owner_id: UUID
+    parcel: ParcelInput
+    created_at: datetime
