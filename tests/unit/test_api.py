@@ -3,6 +3,9 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
+import pytest
+from redis.exceptions import ConnectionError as RedisConnectionError
+
 from delivery_service.db import Parcel
 from delivery_service.schemas import Answer, ParcelMessage
 
@@ -168,8 +171,23 @@ async def test_support_limit(client: Any, csrf: Any, resources: Any) -> None:
 async def test_html_health_and_metrics(client: Any, csrf: Any, resources: Any) -> None:
     assert "PARCEL" in (await client.get("/")).text
     assert (await client.get("/static/app.js")).status_code == 200
+    assert (await client.get("/health/live")).status_code == 200
+    assert (await client.get("/health/ready")).status_code == 200
+    assert "delivery_http" in (await client.get("/metrics")).text
     assert (await client.get("/web/parcels?type_id=999")).status_code == 422
     owner = await owner_from_registration(client, csrf, resources)
     parcel_id = await seed(resources, owner)
     assert "Laptop" in (await client.get("/web/parcels")).text
     assert (await client.get(f"/parcels/{parcel_id}")).status_code == 200
+
+
+@pytest.mark.parametrize("exception", [RedisConnectionError("offline"), RuntimeError("unexpected")])
+async def test_internal_errors_redacted(
+    client: Any, csrf: Any, resources: Any, exception: Exception
+) -> None:
+    from unittest.mock import AsyncMock
+
+    resources.parcels.list = AsyncMock(side_effect=exception)
+    result = await client.get("/api/v1/parcels")
+    assert result.status_code in (500, 503)
+    assert "offline" not in result.text and "unexpected" not in result.text

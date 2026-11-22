@@ -10,6 +10,7 @@ from redis.asyncio import Redis
 from sqlalchemy import func, select
 
 from delivery_service.db import Outbox, database
+from delivery_service.observability import configure
 from delivery_service.settings import Settings
 
 
@@ -96,4 +97,5 @@ def main() -> None:
         report.add_argument("--date", required=True)
     args = parser.parse_args()
     settings = Settings()
+    configure(settings.log_level)
     asyncio.run(execute(args, settings))

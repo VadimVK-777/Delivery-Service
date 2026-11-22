@@ -1,6 +1,7 @@
 """Create the FastAPI application and manage its shared resources."""
 
 import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,10 +19,11 @@ from redis.exceptions import RedisError
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.exceptions import HTTPException
 
-from delivery_service import api
+from delivery_service import api, health
 from delivery_service.broker import Broker
 from delivery_service.db import database
 from delivery_service.domain import Problem
+from delivery_service.observability import LATENCY, REQUESTS, configure
 from delivery_service.security import Sessions
 from delivery_service.services import Parcels
 from delivery_service.settings import Settings
@@ -55,6 +57,7 @@ class Resources:
 
 def create_app(settings: Settings | None = None, resources: Any = None) -> FastAPI:
     settings = settings or Settings()
+    configure(settings.log_level)
     security = Sessions(settings)
     templates = Jinja2Templates(directory=str(WEB / "templates"))
 
@@ -114,6 +117,7 @@ def create_app(settings: Settings | None = None, resources: Any = None) -> FastA
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         request.state.request_id = str(uuid4())
+        start = time.monotonic()
         try:
             response = await call_next(request)
         except (RedisError, SQLAlchemyError):
@@ -126,11 +130,20 @@ def create_app(settings: Settings | None = None, resources: Any = None) -> FastA
             response = problem_response(
                 request, Problem(500, "internal_error", "Внутренняя ошибка")
             )
+        route = getattr(request.scope.get("route"), "path", "unmatched")
+        elapsed = time.monotonic() - start
+        REQUESTS.labels(request.method, route, str(response.status_code)).inc()
+        LATENCY.labels(route).observe(elapsed)
         response.headers["X-Request-ID"] = request.state.request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Cache-Control"] = "no-store"
+        logger.info(
+            "http_request",
+            extra={"request_id": request.state.request_id, "duration_ms": round(elapsed * 1000)},
+        )
         return response
 
     app.include_router(api.create_router(security))
+    app.include_router(health.router)
     app.include_router(web_routes.create_router(security, templates))
     return app
