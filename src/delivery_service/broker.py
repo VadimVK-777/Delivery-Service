@@ -10,6 +10,7 @@ from delivery_service.settings import Settings
 
 QUEUE = "parcels.register"
 DLQ = "parcels.failed"
+DELAYS = (10, 60, 300, 1800, 7200)
 
 
 class Broker:
@@ -53,6 +54,19 @@ class Broker:
                     "x-dead-letter-strategy": "at-least-once",
                 },
             )
+            for delay in DELAYS:
+                await self.channel.declare_queue(
+                    f"{QUEUE}.retry.{delay}",
+                    durable=True,
+                    arguments={
+                        "x-queue-type": "quorum",
+                        "x-message-ttl": delay * 1000,
+                        "x-dead-letter-exchange": "",
+                        "x-dead-letter-routing-key": QUEUE,
+                        "x-overflow": "reject-publish",
+                        "x-dead-letter-strategy": "at-least-once",
+                    },
+                )
 
     async def publish(
         self, body: bytes, message_id: str, *, queue: str = QUEUE, attempt: int = 0

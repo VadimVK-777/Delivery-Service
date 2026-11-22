@@ -1,17 +1,18 @@
 from decimal import Decimal
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import httpx
 import pytest
 from sqlalchemy import func, select
 
+from delivery_service.broker import DELAYS, DLQ
 from delivery_service.db import Outbox, Parcel, utcnow
 from delivery_service.domain import Problem
 from delivery_service.rates import Rates
 from delivery_service.schemas import ParcelInput, ParcelMessage
-from delivery_service.worker import calculate
+from delivery_service.worker import calculate, consume
 
 
 async def test_rate_cache_and_nominal(redis: Any, settings: Any) -> None:
@@ -82,3 +83,50 @@ async def test_calculation_outage_keeps_pending(db: Any) -> None:
         parcel = await session.get(Parcel, data.id)
         assert parcel.status == "pending" and parcel.delivery_cost_rub is None
         assert await session.scalar(select(func.count()).select_from(Outbox)) == 0
+
+
+class Incoming:
+    def __init__(self, body: bytes, attempt: int = 0) -> None:
+        self.body, self.headers, self.message_id = body, {"attempt": attempt}, "test"
+        self.acked = False
+
+    def process(self, requeue: bool) -> Any:
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def context() -> Any:
+            yield
+            self.acked = True
+
+        return context()
+
+
+async def test_retry_confirm_before_ack(db: Any) -> None:
+    data = message()
+    incoming = Incoming(data.model_dump_json().encode())
+    broker = AsyncMock()
+    with patch("delivery_service.worker.calculate", side_effect=OSError("offline")):
+        await consume(incoming, db, AsyncMock(), broker)
+    assert incoming.acked
+    assert broker.publish.call_args.kwargs["attempt"] == 1
+    incoming.acked = False
+    broker.publish.side_effect = OSError("broker down")
+    with (
+        patch("delivery_service.worker.calculate", side_effect=OSError("offline")),
+        pytest.raises(OSError),
+    ):
+        await consume(incoming, db, AsyncMock(), broker)
+    assert not incoming.acked
+
+
+async def test_failed_and_invalid_messages(db: Any) -> None:
+    data = message()
+    rates = AsyncMock()
+    rates.get.side_effect = Problem(503, "rate", "offline")
+    broker = AsyncMock()
+    await consume(Incoming(data.model_dump_json().encode(), len(DELAYS)), db, rates, broker)
+    assert broker.publish.call_args.kwargs["queue"] == DLQ
+    async with db() as session:
+        assert (await session.get(Parcel, data.id)).status == "failed"
+    await consume(Incoming(b"bad json"), db, rates, broker)
+    assert broker.publish.call_args.kwargs["queue"] == DLQ

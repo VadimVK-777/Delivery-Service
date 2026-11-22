@@ -3,16 +3,17 @@
 import asyncio
 import logging
 import time
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 from aio_pika.abc import AbstractIncomingMessage
+from pydantic import ValidationError
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from delivery_service.broker import Broker
+from delivery_service.broker import DELAYS, DLQ, QUEUE, Broker
 from delivery_service.db import Outbox, Parcel, database, utcnow
 from delivery_service.domain import delivery_cost, reporting_day
 from delivery_service.rates import Rates
@@ -97,8 +98,61 @@ async def consume(
     broker: Broker,
 ) -> None:
     async with incoming.process(requeue=True):
-        message = ParcelMessage.model_validate_json(incoming.body)
-        await calculate(message, sessions, rates)
+        try:
+            message = ParcelMessage.model_validate_json(incoming.body)
+        except ValidationError:
+            await broker.publish(incoming.body, incoming.message_id or "invalid", queue=DLQ)
+            logger.error("invalid_message")
+            return
+        try:
+            await calculate(message, sessions, rates)
+        except Exception:
+            attempt = int(str(incoming.headers.get("attempt", 0)))
+            logger.warning(
+                "calculation_retry", extra={"parcel_id": str(message.id), "attempt": attempt}
+            )
+            if attempt < len(DELAYS):
+                await broker.publish(
+                    incoming.body,
+                    str(message.id),
+                    queue=f"{QUEUE}.retry.{DELAYS[attempt]}",
+                    attempt=attempt + 1,
+                )
+            else:
+                async with sessions.begin() as session:
+                    await session.execute(
+                        update(Parcel)
+                        .where(Parcel.id == message.id, Parcel.status != "calculated")
+                        .values(status="failed")
+                    )
+                await broker.publish(incoming.body, str(message.id), queue=DLQ, attempt=attempt)
+
+
+async def retry_parcel(parcel_id: UUID, settings: Settings) -> None:
+    engine, sessions = database(settings.database_url)
+    broker = Broker(settings)
+    try:
+        async with sessions() as session:
+            parcel = await session.get(Parcel, parcel_id)
+            if parcel is None:
+                raise ValueError("Parcel not found")
+            from delivery_service.schemas import ParcelInput
+
+            message = ParcelMessage(
+                id=parcel.id,
+                owner_id=parcel.owner_id,
+                created_at=parcel.created_at,
+                parcel=ParcelInput(
+                    name=parcel.name,
+                    weight_kg=parcel.weight_kg,
+                    type_id=parcel.type_id,
+                    declared_value_usd=parcel.declared_value_usd,
+                ),
+            )
+            await broker.publish(message.model_dump_json().encode(), str(message.id))
+    finally:
+        await broker.close()
+        await engine.dispose()
 
 
 async def run(settings: Settings) -> None:
