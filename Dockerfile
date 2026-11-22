@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 && r
 RUN poetry install --with dev --no-interaction && playwright install --with-deps chromium && chmod -R a+rX /ms-playwright
 COPY tests ./tests
 COPY scripts ./scripts
+COPY Makefile .pre-commit-config.yaml ./
 RUN chown -R app:app /app
 USER app
 CMD ["pytest"]

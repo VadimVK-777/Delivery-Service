@@ -1,0 +1,42 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: Ruff lint
+        entry: poetry run ruff check --fix
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: Ruff format
+        entry: poetry run ruff format
+        language: system
+        types: [python]
+      - id: mypy
+        name: mypy
+        entry: poetry run mypy src
+        language: system
+        types: [python]
+        require_serial: true
+        pass_filenames: false
+      - id: bandit
+        name: Bandit
+        entry: poetry run bandit -c pyproject.toml -r src
+        language: system
+        types: [python]
+        pass_filenames: false
+      - id: radon
+        name: Radon cyclomatic complexity report
+        entry: poetry run radon cc --show-complexity --average
+        language: system
+        types: [python]
+        require_serial: true
+        verbose: true
