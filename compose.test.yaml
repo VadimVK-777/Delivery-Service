@@ -22,6 +22,8 @@ services:
       MONGO_URL: mongodb://mongo:27017/?replicaSet=rs0
       QDRANT_URL: http://qdrant:6333
       RUN_INTEGRATION: "1"
+      RUN_E2E: "1"
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
     command: [python, scripts/test_all.py]
     depends_on:
       postgres: {condition: service_healthy}

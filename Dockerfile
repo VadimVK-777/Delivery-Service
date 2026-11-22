@@ -18,7 +18,9 @@ CMD ["uvicorn", "delivery_service.main:create_app", "--factory", "--host", "0.0.
 
 FROM base AS test
 USER root
-RUN poetry install --with dev --no-interaction
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 && rm -rf /var/lib/apt/lists/*
+RUN poetry install --with dev --no-interaction && playwright install --with-deps chromium && chmod -R a+rX /ms-playwright
 COPY tests ./tests
 COPY scripts ./scripts
 RUN chown -R app:app /app

@@ -12,8 +12,10 @@ subprocess.run(
         "pytest",
         "tests/unit",
         "tests/integration",
+        "tests/e2e",
         "--cov=delivery_service",
         "--cov-report=term-missing",
+        "--cov-fail-under=85",
     ],
     check=True,
 )

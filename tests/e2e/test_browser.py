@@ -1,0 +1,76 @@
+import os
+import subprocess
+import sys
+import time
+from collections.abc import Iterator
+
+import httpx
+import pytest
+from playwright.sync_api import Page, expect
+
+pytestmark = pytest.mark.e2e
+
+
+@pytest.fixture(scope="module")
+def server() -> Iterator[str]:
+    if os.getenv("RUN_E2E") != "1":
+        pytest.skip("Use make test-integration for real browser tests")
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "tests.e2e.local_app:app" if os.getenv("LOCAL_BROWSER") == "1" else "tests.e2e.app:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8090",
+            "--no-access-log",
+        ]
+    )
+    try:
+        for _ in range(60):
+            try:
+                if httpx.get("http://127.0.0.1:8090/health/ready", timeout=2).status_code == 200:
+                    break
+            except httpx.HTTPError:
+                pass
+            time.sleep(1)
+        else:
+            raise RuntimeError("Browser test server did not become ready")
+        yield "http://127.0.0.1:8090"
+    finally:
+        process.terminate()
+        process.wait(timeout=15)
+
+
+def test_register_poll_filter_and_support(page: Page, server: str) -> None:
+    page.set_viewport_size({"width": 1440, "height": 1080})
+    page.goto(server)
+    expect(page.locator("#parcel-list .empty")).to_be_visible()
+    if preview := os.getenv("PREVIEW_IMAGE"):
+        page.screenshot(path=preview, full_page=True)
+    page.get_by_label("Название", exact=True).fill("Browser parcel")
+    page.get_by_label("Вес, кг").fill("2")
+    page.get_by_label("Стоимость, USD").fill("100")
+    page.get_by_label("Тип посылки", exact=True).select_option("2")
+    page.get_by_role("button", name="Зарегистрировать посылку").click()
+    expect(page.locator("#parcel-list")).to_contain_text("Browser parcel", timeout=30000)
+    expect(page.locator("#parcel-list")).to_contain_text("180.00", timeout=30000)
+    page.get_by_label("Фильтр по типу").select_option("1")
+    expect(page.locator("#parcel-list")).not_to_contain_text("Browser parcel")
+    page.get_by_label("Фильтр по типу").select_option("2")
+    expect(page.locator("#parcel-list")).to_contain_text("Browser parcel")
+    page.get_by_label("Ваш вопрос").fill("Можно отправить ноутбук?")
+    page.get_by_role("button", name="Задать вопрос").click()
+    expect(page.locator("#conversation")).to_contain_text("rules.md#2")
+    page.get_by_role("link", name="Browser parcel").first.click()
+    page.get_by_role("button", name="Получить ключ").click()
+    expect(page.locator("#assignment-output")).not_to_be_empty()
+
+
+def test_mobile_layout(page: Page, server: str) -> None:
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto(server)
+    expect(page.get_by_role("button", name="Зарегистрировать посылку")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
