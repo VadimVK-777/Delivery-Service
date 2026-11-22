@@ -1,6 +1,7 @@
 """Application operations with explicit ownership and transaction boundaries."""
 
 import json
+import secrets
 from collections.abc import Awaitable
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
@@ -8,7 +9,7 @@ from uuid import UUID, uuid4
 
 from itsdangerous import BadSignature, URLSafeSerializer
 from redis.asyncio import Redis
-from sqlalchemy import select, tuple_
+from sqlalchemy import select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from delivery_service.db import Parcel, ParcelType
@@ -187,3 +188,48 @@ class Parcels:
         return ParcelPage(
             items=[self.view(row[0], row[1]) for row in rows[:limit]], next_cursor=next_cursor
         )
+
+    async def assignment_token(self, owner: UUID, parcel_id: UUID) -> str:
+        token = secrets.token_urlsafe(32)
+        async with self.sessions.begin() as session:
+            result = await session.execute(
+                update(Parcel)
+                .where(
+                    Parcel.id == parcel_id, Parcel.owner_id == owner, Parcel.carrier_id.is_(None)
+                )
+                .values(assignment_token_hash=digest(token))
+                .returning(Parcel.id)
+            )
+            if result.scalar_one_or_none() is None:
+                await self.get(owner, parcel_id)
+                raise Problem(409, "already_assigned", "Компания уже назначена")
+        return token
+
+    async def assign(self, parcel_id: UUID, token: str, company_id: int) -> int:
+        """Claim an unassigned parcel atomically. A repeat from the winner is idempotent."""
+        async with self.sessions.begin() as session:
+            result = await session.execute(
+                update(Parcel)
+                .where(
+                    Parcel.id == parcel_id,
+                    Parcel.assignment_token_hash == digest(token),
+                    Parcel.carrier_id.is_(None),
+                )
+                .values(carrier_id=company_id)
+                .returning(Parcel.carrier_id)
+            )
+            assigned = result.scalar_one_or_none()
+            if assigned is not None:
+                return assigned
+            parcel = (
+                await session.execute(
+                    select(Parcel).where(
+                        Parcel.id == parcel_id, Parcel.assignment_token_hash == digest(token)
+                    )
+                )
+            ).scalar_one_or_none()
+            if parcel is None:
+                raise Problem(404, "parcel_not_found", "Посылка или ключ не найдены")
+            if parcel.carrier_id != company_id:
+                raise Problem(409, "already_assigned", "Посылка уже закреплена за другой компанией")
+            return company_id

@@ -123,3 +123,30 @@ async def test_list_filter_cursor_and_owner(client: Any, csrf: Any, resources: A
     assert (await client.get(f"/api/v1/parcels/{ids[0]}")).status_code == 404
     assert (await client.get(f"/api/v1/registrations/{ids[0]}")).status_code == 404
     assert (await client.get("/api/v1/parcels")).json()["items"] == []
+
+
+async def test_carrier_token_rotation_and_conflict(client: Any, csrf: Any, resources: Any) -> None:
+    owner = await owner_from_registration(client, csrf, resources)
+    parcel_id = await seed(resources, owner)
+    url = f"/api/v1/parcels/{parcel_id}"
+    old = (await client.post(url + "/assignment-token", headers=csrf)).json()["assignment_token"]
+    token = (await client.post(url + "/assignment-token", headers=csrf)).json()["assignment_token"]
+    assert (
+        await client.put(
+            url + "/carrier", json={"company_id": 1}, headers={"X-Assignment-Token": old}
+        )
+    ).status_code == 404
+    headers = {"X-Assignment-Token": token}
+    assert (
+        await client.put(url + "/carrier", json={"company_id": 1}, headers=headers)
+    ).status_code == 200
+    assert (
+        await client.put(url + "/carrier", json={"company_id": 1}, headers=headers)
+    ).status_code == 200
+    assert (
+        await client.put(url + "/carrier", json={"company_id": 2}, headers=headers)
+    ).status_code == 409
+    assert (await client.post(url + "/assignment-token", headers=csrf)).status_code == 409
+    assert (
+        await client.put(url + "/carrier", json={"company_id": 0}, headers=headers)
+    ).status_code == 422

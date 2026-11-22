@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from delivery_service.db import ParcelType
 from delivery_service.schemas import (
+    CarrierInput,
     ParcelInput,
     ParcelPage,
     ParcelView,
@@ -61,5 +62,28 @@ def create_router(security: Sessions) -> APIRouter:
     @router.get("/parcels/{parcel_id}", response_model=ParcelView, tags=["Parcels"])
     async def parcel_detail(request: Request, parcel_id: UUID) -> Any:
         return await request.app.state.resources.parcels.get(security.require(request), parcel_id)
+
+    @router.post("/parcels/{parcel_id}/assignment-token", tags=["Carrier"])
+    async def assignment_token(
+        request: Request,
+        parcel_id: UUID,
+        x_csrf_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, str]:
+        token = await request.app.state.resources.parcels.assignment_token(
+            security.require(request, mutate=True), parcel_id
+        )
+        return {"assignment_token": token}
+
+    @router.put("/parcels/{parcel_id}/carrier", tags=["Carrier"])
+    async def assign_carrier(
+        request: Request,
+        parcel_id: UUID,
+        data: CarrierInput,
+        x_assignment_token: Annotated[str, Header(min_length=32, max_length=128)],
+    ) -> dict[str, int]:
+        company = await request.app.state.resources.parcels.assign(
+            parcel_id, x_assignment_token, data.company_id
+        )
+        return {"company_id": company}
 
     return router

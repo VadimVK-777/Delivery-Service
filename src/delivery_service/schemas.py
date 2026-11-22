@@ -47,3 +47,8 @@ class ParcelMessage(BaseModel):
     owner_id: UUID
     parcel: ParcelInput
     created_at: datetime
+
+
+class CarrierInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    company_id: int = Field(gt=0, le=9223372036854775807)
