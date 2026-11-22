@@ -16,4 +16,13 @@ USER app
 EXPOSE 8000
 CMD ["uvicorn", "delivery_service.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
 
+FROM base AS test
+USER root
+RUN poetry install --with dev --no-interaction
+COPY tests ./tests
+COPY scripts ./scripts
+RUN chown -R app:app /app
+USER app
+CMD ["pytest"]
+
 FROM base AS production
