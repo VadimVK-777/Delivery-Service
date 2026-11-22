@@ -6,8 +6,9 @@ from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 from uuid import UUID, uuid4
 
-from itsdangerous import URLSafeSerializer
+from itsdangerous import BadSignature, URLSafeSerializer
 from redis.asyncio import Redis
+from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from delivery_service.db import Parcel, ParcelType
@@ -15,6 +16,8 @@ from delivery_service.domain import Problem
 from delivery_service.schemas import (
     ParcelInput,
     ParcelMessage,
+    ParcelPage,
+    ParcelView,
     Registration,
 )
 from delivery_service.security import digest
@@ -88,6 +91,38 @@ class Parcels:
             id=message.id, status="queued", status_url=f"/api/v1/registrations/{message.id}"
         )
 
+    @staticmethod
+    def view(parcel: Parcel, type_name: str) -> ParcelView:
+        cost = parcel.delivery_cost_rub
+        return ParcelView.model_validate(
+            {
+                "id": parcel.id,
+                "name": parcel.name,
+                "weight_kg": parcel.weight_kg,
+                "type_id": parcel.type_id,
+                "type_name": type_name,
+                "declared_value_usd": parcel.declared_value_usd,
+                "delivery_cost_rub": cost,
+                "delivery_cost_display": "Не рассчитано" if cost is None else f"{cost:.2f} ₽",
+                "status": parcel.status,
+                "carrier_id": parcel.carrier_id,
+                "created_at": parcel.created_at,
+            }
+        )
+
+    async def get(self, owner: UUID, parcel_id: UUID) -> ParcelView:
+        async with self.sessions() as session:
+            row = (
+                await session.execute(
+                    select(Parcel, ParcelType.name)
+                    .join(ParcelType)
+                    .where(Parcel.id == parcel_id, Parcel.owner_id == owner)
+                )
+            ).first()
+            if row is None:
+                raise Problem(404, "parcel_not_found", "Посылка не найдена")
+            return self.view(row[0], row[1])
+
     async def status(self, owner: UUID, parcel_id: UUID) -> Registration:
         async with self.sessions() as session:
             parcel = await session.get(Parcel, parcel_id)
@@ -102,4 +137,53 @@ class Parcels:
                 status = json.loads(cached)["status"]
         return Registration(
             id=parcel_id, status=status, status_url=f"/api/v1/registrations/{parcel_id}"
+        )
+
+    async def list(
+        self,
+        owner: UUID,
+        limit: int,
+        type_id: int | None,
+        calculated: bool | None,
+        cursor: str | None,
+    ) -> ParcelPage:
+        query = select(Parcel, ParcelType.name).join(ParcelType).where(Parcel.owner_id == owner)
+        if type_id is not None:
+            query = query.where(Parcel.type_id == type_id)
+        if calculated is not None:
+            query = query.where(
+                Parcel.delivery_cost_rub.is_not(None)
+                if calculated
+                else Parcel.delivery_cost_rub.is_(None)
+            )
+        if cursor:
+            try:
+                data = self.cursor.loads(cursor)
+                if data["owner"] != str(owner) or data["filter"] != [type_id, calculated]:
+                    raise ValueError("Cursor scope mismatch")
+                query = query.where(
+                    tuple_(Parcel.created_at, Parcel.id)
+                    < tuple_(datetime.fromisoformat(data["time"]), UUID(data["id"]))
+                )
+            except (BadSignature, ValueError, KeyError, TypeError) as exc:
+                raise Problem(422, "invalid_cursor", "Недействительный курсор") from exc
+        async with self.sessions() as session:
+            rows = (
+                await session.execute(
+                    query.order_by(Parcel.created_at.desc(), Parcel.id.desc()).limit(limit + 1)
+                )
+            ).all()
+        next_cursor = None
+        if len(rows) > limit:
+            last = rows[limit - 1][0]
+            next_cursor = self.cursor.dumps(
+                {
+                    "owner": str(owner),
+                    "filter": [type_id, calculated],
+                    "time": last.created_at.isoformat(),
+                    "id": str(last.id),
+                }
+            )
+        return ParcelPage(
+            items=[self.view(row[0], row[1]) for row in rows[:limit]], next_cursor=next_cursor
         )

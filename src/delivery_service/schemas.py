@@ -25,6 +25,21 @@ class Registration(BaseModel):
     status_url: str
 
 
+class ParcelView(ParcelInput):
+    id: UUID
+    type_name: str
+    delivery_cost_rub: Decimal | None
+    delivery_cost_display: str
+    status: Literal["pending", "calculated", "failed"]
+    carrier_id: int | None
+    created_at: datetime
+
+
+class ParcelPage(BaseModel):
+    items: list[ParcelView]
+    next_cursor: str | None
+
+
 class ParcelMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
     version: Literal[1] = 1

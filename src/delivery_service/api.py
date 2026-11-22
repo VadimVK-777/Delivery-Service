@@ -3,12 +3,14 @@
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Header, Request, Response
+from fastapi import APIRouter, Header, Query, Request, Response
 from sqlalchemy import select
 
 from delivery_service.db import ParcelType
 from delivery_service.schemas import (
     ParcelInput,
+    ParcelPage,
+    ParcelView,
     Registration,
 )
 from delivery_service.security import Sessions
@@ -43,5 +45,21 @@ def create_router(security: Sessions) -> APIRouter:
         return await request.app.state.resources.parcels.status(
             security.require(request), parcel_id
         )
+
+    @router.get("/parcels", response_model=ParcelPage, tags=["Parcels"])
+    async def parcel_list(
+        request: Request,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        type_id: Annotated[int | None, Query(ge=1, le=3)] = None,
+        calculated: bool | None = None,
+        cursor: str | None = None,
+    ) -> Any:
+        return await request.app.state.resources.parcels.list(
+            security.require(request), limit, type_id, calculated, cursor
+        )
+
+    @router.get("/parcels/{parcel_id}", response_model=ParcelView, tags=["Parcels"])
+    async def parcel_detail(request: Request, parcel_id: UUID) -> Any:
+        return await request.app.state.resources.parcels.get(security.require(request), parcel_id)
 
     return router
