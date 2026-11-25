@@ -1,9 +1,11 @@
 """Service health checks and Prometheus metrics."""
 
+import os
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request, Response
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, CollectorRegistry, generate_latest
+from prometheus_client.multiprocess import MultiProcessCollector
 from sqlalchemy import func, select, text
 
 from delivery_service.db import Outbox
@@ -45,4 +47,8 @@ async def metrics(request: Request) -> Response:
     OUTBOX_AGE.set(
         (datetime.now(UTC) - oldest.replace(tzinfo=UTC)).total_seconds() if oldest else 0
     )
-    return Response(generate_latest(), headers={"Content-Type": CONTENT_TYPE_LATEST})
+    registry = REGISTRY
+    if os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+        registry = CollectorRegistry()
+        MultiProcessCollector(registry)  # type: ignore[no-untyped-call]
+    return Response(generate_latest(registry), headers={"Content-Type": CONTENT_TYPE_LATEST})

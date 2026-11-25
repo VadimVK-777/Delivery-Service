@@ -11,8 +11,8 @@ from playwright.sync_api import Page, expect
 pytestmark = pytest.mark.e2e
 
 
-@pytest.fixture(scope="module")
-def server() -> Iterator[str]:
+@pytest.fixture(scope="session")
+def base_url() -> Iterator[str]:
     if os.getenv("RUN_E2E") != "1":
         pytest.skip("Use make test-integration for real browser tests")
     process = subprocess.Popen(
@@ -44,9 +44,9 @@ def server() -> Iterator[str]:
         process.wait(timeout=15)
 
 
-def test_register_poll_filter_and_support(page: Page, server: str) -> None:
+def test_register_poll_filter_and_support(page: Page, base_url: str) -> None:
     page.set_viewport_size({"width": 1440, "height": 1080})
-    page.goto(server)
+    page.goto(base_url)
     expect(page.locator("#parcel-list .empty")).to_be_visible()
     if preview := os.getenv("PREVIEW_IMAGE"):
         page.screenshot(path=preview, full_page=True)
@@ -69,8 +69,8 @@ def test_register_poll_filter_and_support(page: Page, server: str) -> None:
     expect(page.locator("#assignment-output")).not_to_be_empty()
 
 
-def test_mobile_layout(page: Page, server: str) -> None:
+def test_mobile_layout(page: Page, base_url: str) -> None:
     page.set_viewport_size({"width": 390, "height": 844})
-    page.goto(server)
+    page.goto(base_url)
     expect(page.get_by_role("button", name="Зарегистрировать посылку")).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")

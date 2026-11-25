@@ -14,7 +14,9 @@ ENV HF_HOME=/home/app/.cache/huggingface
 RUN mkdir -p /home/app/.cache && chown -R app:app /home/app
 USER app
 EXPOSE 8000
-CMD ["uvicorn", "delivery_service.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+CMD ["sh", "-ec", "PROMETHEUS_MULTIPROC_DIR=$(mktemp -d /dev/shm/delivery-metrics.XXXXXX); \
+    export PROMETHEUS_MULTIPROC_DIR; \
+    exec uvicorn delivery_service.main:create_app --factory --host 0.0.0.0 --port 8000 --workers 2 --no-access-log"]
 
 FROM base AS test
 USER root
@@ -26,6 +28,5 @@ COPY scripts ./scripts
 COPY Makefile .pre-commit-config.yaml ./
 RUN chown -R app:app /app
 USER app
-CMD ["pytest"]
 
 FROM base AS production

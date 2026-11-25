@@ -9,8 +9,14 @@ from prometheus_client import Counter, Gauge, Histogram
 
 REQUESTS = Counter("delivery_http_requests_total", "HTTP responses", ["method", "route", "status"])
 LATENCY = Histogram("delivery_http_seconds", "Request latency", ["route"])
-OUTBOX_PENDING = Gauge("delivery_outbox_pending", "Undelivered calculation events")
-OUTBOX_AGE = Gauge("delivery_outbox_oldest_seconds", "Age of oldest undelivered event")
+OUTBOX_PENDING = Gauge(
+    "delivery_outbox_pending", "Undelivered calculation events", multiprocess_mode="mostrecent"
+)
+OUTBOX_AGE = Gauge(
+    "delivery_outbox_oldest_seconds",
+    "Age of oldest undelivered event",
+    multiprocess_mode="mostrecent",
+)
 
 URL_USERINFO = re.compile(r"(\b[a-z][a-z0-9+.-]*://)[^/\s?#]+@", re.IGNORECASE)
 URL_QUERY = re.compile(r"""(\b[a-z][a-z0-9+.-]*://[^\s?#<>"']*)[?#][^\s<>"']*""", re.IGNORECASE)
