@@ -1,0 +1,16 @@
+{% extends "base.html" %}{% block content %}
+<div class="intro"><p class="eyebrow">ИЗ ТОЧКИ А — В ЛЮБУЮ ТОЧКУ</p><h1>Ваши посылки.<br><span>Всё под контролем.</span></h1><p>Зарегистрируйте отправление — мы рассчитаем стоимость доставки в рублях.</p></div>
+<div class="layout"><section class="panel"><p class="eyebrow">01 / НОВОЕ ОТПРАВЛЕНИЕ</p><h2>Куда бы ни отправлялись вещи</h2>
+<form id="register-form"><label>Название<input name="name" required maxlength="255" placeholder="Например, подарок для друга"></label>
+<div class="row"><label>Вес, кг (до {{ max_weight_kg }})<input name="weight_kg" type="number" min="0.001" max="{{ max_weight_kg }}" step="0.001" required placeholder="1.500"></label><label>Стоимость, USD (до {{ max_declared_value_usd }})<input name="declared_value_usd" type="number" min="0" max="{{ max_declared_value_usd }}" step="0.01" required placeholder="50.00"></label></div>
+<div class="field"><label for="type-options">Тип посылки</label><select name="type_id" id="type-options" required><option value="">Загружаем типы…</option></select></div>
+<button type="submit">Зарегистрировать посылку ↗</button><p class="hint">Расчёт выполняется в очереди. Обновлять страницу не нужно.</p></form>
+<div id="pending" aria-live="polite"></div></section>
+<section class="panel chat"><p class="eyebrow">ЕСТЬ ВОПРОС?</p><h2>Спросите о доставке</h2><p>Помощник ищет ответы в демонстрационных правилах доставки и таможни.</p>
+<div id="conversation" aria-live="polite"><p class="bubble">Можно ли отправить ноутбук? Какие ограничения на вес? Спросите — и я найду правило.</p></div>
+<form id="question-form"><label class="sr-only" for="question">Ваш вопрос</label><textarea id="question" name="question" required maxlength="2000" placeholder="Что вы хотите узнать?" rows="2"></textarea><button type="submit" class="secondary">Задать вопрос →</button></form></section></div>
+<section class="shipments"><div class="section-title"><div><p class="eyebrow">02 / МОИ ОТПРАВЛЕНИЯ</p><h2>История посылок</h2></div><form id="filters" hx-get="/web/parcels" hx-target="#parcel-list" hx-trigger="change">
+<select name="type_id" aria-label="Фильтр по типу"><option value="">Все типы</option><option value="1">Одежда</option><option value="2">Электроника</option><option value="3">Разное</option></select>
+<select name="calculated" aria-label="Фильтр по расчёту"><option value="">Любой статус</option><option value="true">Рассчитано</option><option value="false">Не рассчитано</option></select></form></div>
+<div id="parcel-list" hx-get="/web/parcels" hx-trigger="load, parcelsChanged from:body" hx-include="#filters"><p>Загружаем отправления…</p></div></section>
+{% endblock %}

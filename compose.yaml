@@ -1,0 +1,90 @@
+name: delivery-service
+x-app: &app
+  build:
+    context: .
+    target: production
+  env_file: .env
+  environment: &environment
+    DATABASE_URL: postgresql+asyncpg://delivery:delivery@postgres:5432/delivery
+    REDIS_URL: redis://redis:6379/0
+    RABBITMQ_URL: amqp://delivery:delivery@rabbitmq:5672/
+    MONGO_URL: mongodb://mongo:27017/?replicaSet=rs0
+    QDRANT_URL: http://qdrant:6333
+  restart: unless-stopped
+services:
+  postgres:
+    image: postgres:19.0-bookworm
+    environment: {POSTGRES_DB: delivery, POSTGRES_USER: delivery, POSTGRES_PASSWORD: delivery}
+    volumes: [postgres19-data:/var/lib/postgresql]
+    healthcheck: {test: [CMD-SHELL, "pg_isready -U delivery -d delivery"], interval: 3s, timeout: 3s, retries: 30}
+  redis:
+    image: redis:7.4.2-alpine
+    command: [redis-server, --appendonly, "yes", --maxmemory-policy, noeviction]
+    volumes: [redis-data:/data]
+    healthcheck: {test: [CMD, redis-cli, ping], interval: 3s, timeout: 3s, retries: 30}
+  rabbitmq:
+    image: rabbitmq:4.1.0-management-alpine
+    environment: {RABBITMQ_DEFAULT_USER: delivery, RABBITMQ_DEFAULT_PASS: delivery}
+    volumes: [rabbit-data:/var/lib/rabbitmq]
+    healthcheck: {test: [CMD, rabbitmq-diagnostics, -q, ping], interval: 5s, timeout: 5s, retries: 30}
+  mongo:
+    image: mongo:8.0.9
+    command: [mongod, --replSet, rs0, --bind_ip_all]
+    volumes: [mongo-data:/data/db]
+    healthcheck:
+      test: [CMD, mongosh, --quiet, --eval, "db.adminCommand('ping').ok"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+  mongo-init:
+    image: mongo:8.0.9
+    depends_on: {mongo: {condition: service_healthy}}
+    entrypoint: [mongosh, --host, mongo, --quiet, --eval]
+    command: ['try { rs.status() } catch(e) { rs.initiate({_id:"rs0",members:[{_id:0,host:"mongo:27017"}]}) }; while (!db.hello().isWritablePrimary) { sleep(500) }']
+  qdrant:
+    image: qdrant/qdrant:v1.14.1
+    volumes: [qdrant-data:/qdrant/storage]
+  migrate:
+    <<: *app
+    restart: "no"
+    command: [alembic, upgrade, head]
+    depends_on: {postgres: {condition: service_healthy}}
+  knowledge-init:
+    <<: *app
+    restart: on-failure
+    command: [delivery, index-knowledge]
+    depends_on: [qdrant]
+    volumes: [model-cache:/home/app/.cache]
+  api:
+    <<: *app
+    ports: ["127.0.0.1:8000:8000"]
+    volumes: [model-cache:/home/app/.cache]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5)"]
+      interval: 10s
+      timeout: 8s
+      retries: 12
+  worker:
+    <<: *app
+    command: [delivery, worker]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+  outbox:
+    <<: *app
+    command: [delivery, outbox]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      mongo-init: {condition: service_completed_successfully}
+volumes:
+  postgres19-data:
+  redis-data:
+  rabbit-data:
+  mongo-data:
+  qdrant-data:
+  model-cache:
