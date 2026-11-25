@@ -6,7 +6,7 @@ from collections.abc import Iterator
 
 import httpx
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page, Route, expect
 
 pytestmark = pytest.mark.e2e
 
@@ -67,6 +67,34 @@ def test_register_poll_filter_and_support(page: Page, base_url: str) -> None:
     page.get_by_role("link", name="Browser parcel").first.click()
     page.get_by_role("button", name="Получить ключ").click()
     expect(page.locator("#assignment-output")).not_to_be_empty()
+
+
+def test_registration_during_status_poll(page: Page, base_url: str) -> None:
+    # Start with a parcel already tracked in this tab.
+    first_id = "11111111-1111-4111-8111-111111111111"
+    page.add_init_script(f"sessionStorage.setItem('pending', JSON.stringify(['{first_id}']))")
+    first_status = f"**/api/v1/registrations/{first_id}"
+    delayed: list[Route] = []
+    page.route(first_status, lambda route: delayed.append(route))
+    with page.expect_request(first_status):
+        page.goto(base_url)
+
+    page.get_by_label("Название", exact=True).fill("Second parcel")
+    page.get_by_label("Вес, кг").fill("2")
+    page.get_by_label("Стоимость, USD").fill("100")
+    page.get_by_label("Тип посылки", exact=True).select_option("2")
+    with page.expect_response("**/api/v1/parcels") as registered:
+        page.get_by_role("button", name="Зарегистрировать посылку").click()
+    assert registered.value.status == 202
+    second_id = registered.value.json()["id"]
+    page.wait_for_function("id => JSON.parse(sessionStorage.pending).includes(id)", arg=second_id)
+
+    delayed[0].fulfill(json={"status": "calculated"})
+    page.wait_for_function("id => !JSON.parse(sessionStorage.pending).includes(id)", arg=first_id)
+    expect(page.locator(f'#pending a[href="/parcels/{second_id}"]')).to_have_text(
+        f"{second_id[:8]} · calculated", timeout=30000
+    )
+    assert page.evaluate("JSON.parse(sessionStorage.pending)") == []
 
 
 def test_mobile_layout(page: Page, base_url: str) -> None:

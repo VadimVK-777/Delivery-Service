@@ -9,6 +9,9 @@ if (register) {
   fetch('/api/v1/parcel-types').then(r => {if (!r.ok) throw new Error('Типы посылок недоступны'); return r.json();}).then(types => {
     const select = document.querySelector('#type-options'); select.replaceChildren(...types.map(t => new Option(t.name, t.id)));
   }).catch(e => notice(e.message));
+  function pendingIds() {
+    return JSON.parse(sessionStorage.getItem('pending') || '[]');
+  }
   let requestKey = null, requestBody = null;
   register.addEventListener('submit', async event => {
     event.preventDefault(); const button = register.querySelector('button'); button.disabled = true;
@@ -16,23 +19,45 @@ if (register) {
     const serialized = JSON.stringify(body); if (serialized !== requestBody) {requestKey = crypto.randomUUID(); requestBody = serialized;}
     try {
       const data = await api('/api/v1/parcels', body, {'Idempotency-Key': requestKey});
-      const pending = JSON.parse(sessionStorage.getItem('pending') || '[]'); if (!pending.includes(data.id)) pending.push(data.id);
+      const pending = pendingIds(); if (!pending.includes(data.id)) pending.push(data.id);
       sessionStorage.setItem('pending', JSON.stringify(pending)); register.reset(); requestKey = null; requestBody = null;
       notice('Посылка принята. Рассчитываем доставку.'); poll();
     } catch (e) {notice(e.message);} finally {button.disabled = false;}
   });
+  let polling = false;
   async function poll() {
-    const pending = JSON.parse(sessionStorage.getItem('pending') || '[]'); const keep = [];
-    const container = document.querySelector('#pending'); container.replaceChildren();
-    for (const id of pending) {
-      try {
-        const response = await fetch(`/api/v1/registrations/${id}`); if (!response.ok) {if (response.status !== 404) keep.push(id); continue;}
-        const data = await response.json(); const item = document.createElement('a'); item.textContent = `${id.slice(0, 8)} · ${data.status}`;
-        if (['pending','calculated','failed'].includes(data.status)) item.href = `/parcels/${id}`;
-        container.append(item); if (!['calculated','failed'].includes(data.status)) keep.push(id);
-      } catch {keep.push(id);}
+    if (polling) return;
+    polling = true;
+    try {
+      const pending = pendingIds();
+      const finished = new Set();
+      const items = document.createDocumentFragment();
+      for (const id of pending) {
+        try {
+          const response = await fetch(`/api/v1/registrations/${id}`);
+          if (!response.ok) {
+            if (response.status === 404) finished.add(id);
+            continue;
+          }
+          const {status} = await response.json();
+          const item = document.createElement('a');
+          item.textContent = `${id.slice(0, 8)} · ${status}`;
+          if (['pending', 'calculated', 'failed'].includes(status)) item.href = `/parcels/${id}`;
+          items.append(item);
+          if (status === 'calculated' || status === 'failed') finished.add(id);
+        } catch {
+          // Keep this parcel for the next poll.
+        }
+      }
+      if (finished.size) {
+        // A registration may have added another parcel while the requests were in flight.
+        sessionStorage.setItem('pending', JSON.stringify(pendingIds().filter(id => !finished.has(id))));
+      }
+      document.querySelector('#pending').replaceChildren(items);
+      if (pending.length) htmx.trigger(document.body, 'parcelsChanged');
+    } finally {
+      polling = false;
     }
-    sessionStorage.setItem('pending', JSON.stringify(keep)); if (pending.length) htmx.trigger(document.body, 'parcelsChanged');
   }
   setInterval(poll, 3000); poll();
 }
