@@ -4,15 +4,14 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Query, Request, Response
-from sqlalchemy import select
 
-from delivery_service.db import ParcelType
 from delivery_service.domain import Problem
 from delivery_service.schemas import (
     Answer,
     CarrierInput,
     ParcelInput,
     ParcelPage,
+    ParcelTypeView,
     ParcelView,
     Question,
     Registration,
@@ -33,11 +32,9 @@ def create_router(security: Sessions) -> APIRouter:
         security.set_cookie(response, owner)
         return {"csrf_token": security.csrf(owner)}
 
-    @router.get("/parcel-types", tags=["Parcels"])
-    async def types(request: Request) -> list[dict[str, Any]]:
-        async with request.app.state.resources.db() as session:
-            rows = (await session.scalars(select(ParcelType).order_by(ParcelType.id))).all()
-            return [{"id": row.id, "name": row.name} for row in rows]
+    @router.get("/parcel-types", response_model=list[ParcelTypeView], tags=["Parcels"])
+    async def types(request: Request) -> Any:
+        return await request.app.state.resources.parcels.list_types()
 
     @router.post("/parcels", status_code=202, response_model=Registration, tags=["Parcels"])
     async def register(

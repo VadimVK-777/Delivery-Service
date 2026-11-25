@@ -9,9 +9,10 @@ import pytest
 from jinja2 import Template
 from redis.exceptions import ConnectionError as RedisConnectionError
 
-from delivery_service.db import Parcel
+from delivery_service.db import Parcel, ParcelType
 from delivery_service.schemas import Answer, ParcelMessage
 from delivery_service.security import COOKIE
+from delivery_service.services import PARCEL_TYPES_KEY, PARCEL_TYPES_TTL
 from delivery_service.worker import calculate, parcel_message
 
 DATA = {"name": "Laptop", "weight_kg": "2", "type_id": 2, "declared_value_usd": "100"}
@@ -59,6 +60,36 @@ async def test_session_csrf_and_types(client: Any) -> None:
     ).status_code == 403
     assert len((await client.get("/api/v1/parcel-types")).json()) == 3
     assert (await client.get("/docs")).status_code == 200
+
+
+async def test_parcel_types_cache_hit_and_expiry(client: Any, resources: Any) -> None:
+    url = "/api/v1/parcel-types"
+    expected = [
+        {"id": 1, "name": "одежда"},
+        {"id": 2, "name": "электроника"},
+        {"id": 3, "name": "разное"},
+    ]
+    with patch.object(resources.parcels, "sessions", wraps=resources.db) as sessions:
+        assert (await client.get(url)).json() == expected
+        assert 0 < await resources.redis.ttl(PARCEL_TYPES_KEY) <= PARCEL_TYPES_TTL
+        async with resources.db.begin() as session:
+            (await session.get(ParcelType, 3)).name = "прочее"
+        assert (await client.get(url)).json() == expected
+        sessions.assert_called_once()
+        await resources.redis.expire(PARCEL_TYPES_KEY, 0)
+        expected[2]["name"] = "прочее"
+        assert (await client.get(url)).json() == expected
+        assert sessions.call_count == 2
+
+
+@pytest.mark.parametrize("operation", ["get", "set"])
+async def test_parcel_types_available_during_cache_failure(
+    client: Any, resources: Any, operation: str
+) -> None:
+    with patch.object(resources.redis, operation, new=AsyncMock(side_effect=RedisConnectionError)):
+        response = await client.get("/api/v1/parcel-types")
+    assert response.status_code == 200
+    assert [row["id"] for row in response.json()] == [1, 2, 3]
 
 
 @pytest.mark.parametrize(("length", "status"), [(0, 422), (1, 202), (128, 202), (129, 422)])

@@ -86,6 +86,9 @@ poetry run pre-commit install
 | `PUT /api/v1/parcels/{id}/carrier` | Назначить компанию: `{"company_id":123}` |
 | `POST /api/v1/support/questions` | `{"question":"Можно ли отправить ноутбук?"}` |
 
+API кэширует справочник типов посылок в Redis на один час. При промахе кэша
+или недоступности Redis справочник читается из PostgreSQL.
+
 Пагинация: `limit=20` (максимум 100) и `cursor` из `next_cursor`. Фильтры: `type_id=2`,
 `calculated=true/false`. Курсор подписан и привязан к сессии и фильтрам.
 Необработанная очередь ещё не входит в список; её состояние доступно по `status_url` 24 часа,

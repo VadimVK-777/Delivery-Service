@@ -3,12 +3,15 @@
 import json
 import secrets
 from collections.abc import Awaitable
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 from uuid import UUID, uuid4
 
 from itsdangerous import BadSignature, URLSafeSerializer
+from pydantic import TypeAdapter, ValidationError
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from sqlalchemy import select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -18,10 +21,15 @@ from delivery_service.schemas import (
     ParcelInput,
     ParcelMessage,
     ParcelPage,
+    ParcelTypeView,
     ParcelView,
     Registration,
 )
 from delivery_service.security import digest
+
+PARCEL_TYPES_KEY = "catalog:parcel-types:v1"
+PARCEL_TYPES_TTL = 3600
+PARCEL_TYPES = TypeAdapter(list[ParcelTypeView])
 
 RESERVE = """
 local old = redis.call('get', KEYS[1])
@@ -46,6 +54,26 @@ class Parcels:
     ) -> None:
         self.sessions, self.redis, self.broker = sessions, redis, broker
         self.cursor = URLSafeSerializer(signing_secret, salt="parcel-cursor")
+
+    async def _load_types(self) -> list[ParcelTypeView]:
+        async with self.sessions() as session:
+            rows = await session.scalars(select(ParcelType).order_by(ParcelType.id))
+            return [ParcelTypeView(id=row.id, name=row.name) for row in rows]
+
+    async def list_types(self) -> list[ParcelTypeView]:
+        try:
+            cached = await self.redis.get(PARCEL_TYPES_KEY)
+        except RedisError:
+            return await self._load_types()
+        if cached is not None:
+            with suppress(ValidationError):
+                return PARCEL_TYPES.validate_json(cached)
+        types = await self._load_types()
+        with suppress(RedisError):
+            await self.redis.set(
+                PARCEL_TYPES_KEY, PARCEL_TYPES.dump_json(types), ex=PARCEL_TYPES_TTL
+            )
+        return types
 
     async def register(self, owner: UUID, data: ParcelInput, key: str) -> Registration:
         """Reserve one ID per request key and return only after broker confirmation."""

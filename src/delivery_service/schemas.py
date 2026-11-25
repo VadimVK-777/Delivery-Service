@@ -14,6 +14,11 @@ Weight = Annotated[Decimal, Field(gt=0, max_digits=12, decimal_places=3, allow_i
 Money = Annotated[Decimal, Field(ge=0, max_digits=16, decimal_places=2, allow_inf_nan=False)]
 
 
+class ParcelTypeView(BaseModel):
+    id: int
+    name: str
+
+
 class ParcelData(BaseModel):
     """Fields shared by stored parcels and existing version-1 broker messages."""
 
