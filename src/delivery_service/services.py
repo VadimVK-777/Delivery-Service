@@ -49,8 +49,6 @@ class Parcels:
 
     async def register(self, owner: UUID, data: ParcelInput, key: str) -> Registration:
         """Reserve one ID per request key and return only after broker confirmation."""
-        if not 1 <= len(key) <= 128:
-            raise Problem(422, "invalid_idempotency_key", "Нужен Idempotency-Key длиной 1–128")
         async with self.sessions() as session:
             if await session.get(ParcelType, data.type_id) is None:
                 raise Problem(422, "unknown_parcel_type", "Неизвестный тип посылки")

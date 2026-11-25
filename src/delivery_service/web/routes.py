@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from delivery_service.domain import Problem
+from delivery_service.schemas import MAX_DECLARED_VALUE_USD, MAX_WEIGHT_KG
 from delivery_service.security import Sessions
 
 
@@ -17,7 +18,13 @@ def create_router(security: Sessions, templates: Jinja2Templates) -> APIRouter:
     async def home(request: Request) -> Response:
         owner = security.get_or_create_owner(request)
         response = templates.TemplateResponse(
-            request=request, name="index.html", context={"csrf": security.csrf(owner)}
+            request=request,
+            name="index.html",
+            context={
+                "csrf": security.csrf(owner),
+                "max_weight_kg": MAX_WEIGHT_KG,
+                "max_declared_value_usd": MAX_DECLARED_VALUE_USD,
+            },
         )
         security.set_cookie(response, owner)
         return response

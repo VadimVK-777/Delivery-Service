@@ -17,7 +17,7 @@ from delivery_service.broker import DELAYS, DLQ, QUEUE, Broker
 from delivery_service.db import Outbox, Parcel, database, utcnow
 from delivery_service.domain import delivery_cost, reporting_day
 from delivery_service.rates import Rates
-from delivery_service.schemas import ParcelMessage
+from delivery_service.schemas import ParcelData, ParcelMessage
 from delivery_service.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -128,6 +128,15 @@ async def consume(
                 await broker.publish(incoming.body, str(message.id), queue=DLQ, attempt=attempt)
 
 
+def parcel_message(parcel: Parcel) -> ParcelMessage:
+    return ParcelMessage(
+        id=parcel.id,
+        owner_id=parcel.owner_id,
+        created_at=parcel.created_at,
+        parcel=ParcelData.model_validate(parcel, from_attributes=True),
+    )
+
+
 async def retry_parcel(parcel_id: UUID, settings: Settings) -> None:
     engine, sessions = database(settings.database_url)
     broker = Broker(settings)
@@ -136,19 +145,7 @@ async def retry_parcel(parcel_id: UUID, settings: Settings) -> None:
             parcel = await session.get(Parcel, parcel_id)
             if parcel is None:
                 raise ValueError("Parcel not found")
-            from delivery_service.schemas import ParcelInput
-
-            message = ParcelMessage(
-                id=parcel.id,
-                owner_id=parcel.owner_id,
-                created_at=parcel.created_at,
-                parcel=ParcelInput(
-                    name=parcel.name,
-                    weight_kg=parcel.weight_kg,
-                    type_id=parcel.type_id,
-                    declared_value_usd=parcel.declared_value_usd,
-                ),
-            )
+            message = parcel_message(parcel)
             await broker.publish(message.model_dump_json().encode(), str(message.id))
     finally:
         await broker.close()

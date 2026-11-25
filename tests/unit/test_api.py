@@ -1,7 +1,8 @@
+import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -11,6 +12,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from delivery_service.db import Parcel
 from delivery_service.schemas import Answer, ParcelMessage
 from delivery_service.security import COOKIE
+from delivery_service.worker import calculate, parcel_message
 
 DATA = {"name": "Laptop", "weight_kg": "2", "type_id": 2, "declared_value_usd": "100"}
 
@@ -59,6 +61,13 @@ async def test_session_csrf_and_types(client: Any) -> None:
     assert (await client.get("/docs")).status_code == 200
 
 
+@pytest.mark.parametrize(("length", "status"), [(0, 422), (1, 202), (128, 202), (129, 422)])
+async def test_idempotency_key_length(client: Any, csrf: Any, length: int, status: int) -> None:
+    headers = {**csrf, "Idempotency-Key": "x" * length}
+    response = await client.post("/api/v1/parcels", json=DATA, headers=headers)
+    assert response.status_code == status
+
+
 async def test_registration_idempotency_and_privacy(client: Any, csrf: Any, resources: Any) -> None:
     first = await client.post("/api/v1/parcels", json=DATA, headers=csrf)
     second = await client.post("/api/v1/parcels", json=DATA, headers=csrf)
@@ -91,6 +100,37 @@ async def test_validation_problem(client: Any, csrf: Any) -> None:
     assert response.json()["errors"]
     assert response.json()["request_id"] == response.headers["x-request-id"]
     assert (await client.get("/missing")).json()["status"] == 404
+
+
+async def test_registration_limits(client: Any, csrf: Any, resources: Any) -> None:
+    url = "/api/v1/parcels"
+    for field, value in (("weight_kg", "30.001"), ("declared_value_usd", "10000.01")):
+        response = await client.post(url, json={**DATA, field: value}, headers=csrf)
+        assert response.status_code == 422
+        assert response.json()["errors"][0]["field"] == ["body", field]
+    resources.broker.publish.assert_not_awaited()
+    response = await client.post(
+        url, json={**DATA, "weight_kg": "30.000", "declared_value_usd": "10000.00"}, headers=csrf
+    )
+    assert response.status_code == 202
+    resources.broker.publish.assert_awaited_once()
+
+
+async def test_previously_accepted_oversized_parcel(client: Any, csrf: Any, resources: Any) -> None:
+    await owner_from_registration(client, csrf, resources)
+    queued = json.loads(resources.broker.publish.call_args.args[0])
+    queued["parcel"].update(weight_kg="31.000", declared_value_usd="10001.00")
+    message = ParcelMessage.model_validate(queued)
+    rates = AsyncMock()
+    rates.get.return_value = (Decimal("90"), "2026-01-01")
+    await calculate(message, resources.db, rates)
+    async with resources.db() as session:
+        stored = await session.get(Parcel, message.id)
+        assert parcel_message(stored).parcel == message.parcel
+    detail = await client.get(f"/api/v1/parcels/{message.id}")
+    assert detail.status_code == 200
+    assert detail.json()["weight_kg"] == "31.000"
+    assert detail.json()["declared_value_usd"] == "10001.00"
 
 
 async def test_list_filter_cursor_and_owner(client: Any, csrf: Any, resources: Any) -> None:

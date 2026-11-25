@@ -2,7 +2,7 @@
 <div class="intro"><p class="eyebrow">ИЗ ТОЧКИ А — В ЛЮБУЮ ТОЧКУ</p><h1>Ваши посылки.<br><span>Всё под контролем.</span></h1><p>Зарегистрируйте отправление — мы рассчитаем стоимость доставки в рублях.</p></div>
 <div class="layout"><section class="panel"><p class="eyebrow">01 / НОВОЕ ОТПРАВЛЕНИЕ</p><h2>Куда бы ни отправлялись вещи</h2>
 <form id="register-form"><label>Название<input name="name" required maxlength="255" placeholder="Например, подарок для друга"></label>
-<div class="row"><label>Вес, кг<input name="weight_kg" type="number" min="0.001" step="0.001" required placeholder="1.500"></label><label>Стоимость, USD<input name="declared_value_usd" type="number" min="0" step="0.01" required placeholder="50.00"></label></div>
+<div class="row"><label>Вес, кг (до {{ max_weight_kg }})<input name="weight_kg" type="number" min="0.001" max="{{ max_weight_kg }}" step="0.001" required placeholder="1.500"></label><label>Стоимость, USD (до {{ max_declared_value_usd }})<input name="declared_value_usd" type="number" min="0" max="{{ max_declared_value_usd }}" step="0.01" required placeholder="50.00"></label></div>
 <div class="field"><label for="type-options">Тип посылки</label><select name="type_id" id="type-options" required><option value="">Загружаем типы…</option></select></div>
 <button type="submit">Зарегистрировать посылку ↗</button><p class="hint">Расчёт выполняется в очереди. Обновлять страницу не нужно.</p></form>
 <div id="pending" aria-live="polite"></div></section>
