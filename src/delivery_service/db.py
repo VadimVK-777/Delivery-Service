@@ -14,6 +14,7 @@ from sqlalchemy import (
     Index,
     Numeric,
     String,
+    text,
 )
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -46,6 +47,12 @@ class Parcel(Base):
         CheckConstraint("status IN ('pending', 'calculated', 'failed')"),
         Index("ix_parcels_owner_created", "owner_id", "created_at", "id"),
         Index("ix_parcels_owner_type_status", "owner_id", "type_id", "status", "created_at", "id"),
+        Index(
+            "ix_parcels_recover_after",
+            "recover_after",
+            "id",
+            postgresql_where=text("recover_after IS NOT NULL"),
+        ),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True)
     owner_id: Mapped[UUID] = mapped_column()
@@ -61,6 +68,7 @@ class Parcel(Base):
     assignment_token_hash: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     calculated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    recover_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Outbox(Base):

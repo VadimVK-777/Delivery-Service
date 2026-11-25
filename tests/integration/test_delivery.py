@@ -13,7 +13,7 @@ from delivery_service.domain import Problem
 from delivery_service.reporting import Reports
 from delivery_service.schemas import ParcelInput, ParcelMessage
 from delivery_service.services import Parcels
-from delivery_service.worker import calculate, consume
+from delivery_service.worker import calculate, consume, recover_due
 
 pytestmark = pytest.mark.integration
 
@@ -63,6 +63,38 @@ async def test_parallel_duplicate_calculations(db: Any) -> None:
             == 1
         )
         assert (await session.get(Parcel, data.id)).delivery_cost_rub == Decimal("180.00")
+
+
+async def test_two_workers_recover_failed_parcel_once(db: Any) -> None:
+    data = message()
+    async with db.begin() as session:
+        session.add(
+            Parcel(
+                id=data.id,
+                owner_id=data.owner_id,
+                created_at=data.created_at,
+                **data.parcel.model_dump(),
+                status="failed",
+                recover_after=utcnow(),
+            )
+        )
+    publishing, confirmed = asyncio.Event(), asyncio.Event()
+    broker, rates = AsyncMock(), AsyncMock()
+
+    async def publish(body: bytes, message_id: str) -> None:
+        assert message_id == str(data.id)
+        publishing.set()
+        await confirmed.wait()
+
+    broker.publish.side_effect = publish
+    async with asyncio.timeout(10), asyncio.TaskGroup() as tasks:
+        tasks.create_task(recover_due(db, rates, broker))
+        await publishing.wait()
+        await recover_due(db, rates, broker)
+        confirmed.set()
+    broker.publish.assert_awaited_once()
+    async with db() as session:
+        assert (await session.get(Parcel, data.id)).status == "pending"
 
 
 async def test_broker_redelivery_and_mongo_exactly_once(db: Any, settings: Any) -> None:

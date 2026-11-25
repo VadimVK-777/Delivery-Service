@@ -22,7 +22,7 @@ async def seed(
     resources: Any,
     owner: UUID,
     *,
-    calculated: bool = False,
+    status: str = "pending",
     type_id: int = 2,
     created_at: datetime | None = None,
 ) -> UUID:
@@ -36,8 +36,8 @@ async def seed(
                 weight_kg=Decimal("2"),
                 type_id=type_id,
                 declared_value_usd=Decimal("100"),
-                status="calculated" if calculated else "pending",
-                delivery_cost_rub=Decimal("180") if calculated else None,
+                status=status,
+                delivery_cost_rub=Decimal("180") if status == "calculated" else None,
                 created_at=created_at or datetime.now(UTC),
             )
         )
@@ -171,11 +171,11 @@ async def test_list_filter_cursor_and_owner(client: Any, csrf: Any, resources: A
         await seed(
             resources,
             owner,
-            calculated=bool(i % 2),
+            status=status,
             type_id=i % 3 + 1,
             created_at=now + timedelta(seconds=i),
         )
-        for i in range(5)
+        for i, status in enumerate(("pending", "calculated", "pending", "calculated", "failed"))
     ]
     await seed(resources, uuid4())
     first = (await client.get("/api/v1/parcels?limit=2")).json()
@@ -183,9 +183,11 @@ async def test_list_filter_cursor_and_owner(client: Any, csrf: Any, resources: A
         await client.get("/api/v1/parcels", params={"limit": 2, "cursor": first["next_cursor"]})
     ).json()
     assert len({p["id"] for p in first["items"] + second["items"]}) == 4
-    assert (await client.get("/api/v1/parcels?calculated=true")).json()["items"][0][
-        "delivery_cost_rub"
-    ] == "180.00"
+    calculated = (await client.get("/api/v1/parcels?type_id=2&calculated=true")).json()["items"]
+    assert [p["id"] for p in calculated] == [str(ids[1])]
+    assert calculated[0]["delivery_cost_rub"] == "180.00"
+    uncalculated = (await client.get("/api/v1/parcels?calculated=false")).json()["items"]
+    assert [p["id"] for p in uncalculated] == [str(ids[i]) for i in (4, 2, 0)]
     assert len((await client.get("/api/v1/parcels?type_id=3")).json()["items"]) == 1
     assert (await client.get(f"/api/v1/parcels/{ids[0]}")).json()[
         "delivery_cost_display"

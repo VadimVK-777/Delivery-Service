@@ -12,7 +12,7 @@ from delivery_service.db import Outbox, Parcel, utcnow
 from delivery_service.domain import Problem
 from delivery_service.rates import Rates
 from delivery_service.schemas import ParcelInput, ParcelMessage
-from delivery_service.worker import calculate, consume
+from delivery_service.worker import calculate, consume, recover_due
 
 
 async def test_rate_cache_and_nominal(redis: Any, settings: Any) -> None:
@@ -76,7 +76,7 @@ async def test_calculate_idempotent_and_outbox(db: Any) -> None:
 async def test_calculation_outage_keeps_pending(db: Any) -> None:
     data = message()
     rates = AsyncMock()
-    rates.get.side_effect = Problem(503, "rate", "offline")
+    rates.get.side_effect = Problem(503, "rate_unavailable", "offline")
     with pytest.raises(Problem):
         await calculate(data, db, rates)
     async with db() as session:
@@ -122,11 +122,65 @@ async def test_retry_confirm_before_ack(db: Any) -> None:
 async def test_failed_and_invalid_messages(db: Any) -> None:
     data = message()
     rates = AsyncMock()
-    rates.get.side_effect = Problem(503, "rate", "offline")
+    rates.get.side_effect = ValueError("Delivery cost exceeds reporting integer range")
     broker = AsyncMock()
     await consume(Incoming(data.model_dump_json().encode(), len(DELAYS)), db, rates, broker)
     assert broker.publish.call_args.kwargs["queue"] == DLQ
     async with db() as session:
-        assert (await session.get(Parcel, data.id)).status == "failed"
+        parcel = await session.get(Parcel, data.id)
+        assert parcel.status == "failed" and parcel.recover_after is None
     await consume(Incoming(b"bad json"), db, rates, broker)
     assert broker.publish.call_args.kwargs["queue"] == DLQ
+
+
+async def test_recovery_after_extended_rate_outage(db: Any, redis: Any, settings: Any) -> None:
+    data = message()
+    body = data.model_dump_json().encode()
+    response = httpx.Response(503)
+    broker = AsyncMock()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: response)) as http:
+        rates = Rates(redis, http, settings)
+        # While the normal delayed retries are outstanding, the sweep leaves the parcel alone.
+        with pytest.raises(Problem):
+            await calculate(data, db, rates)
+        await recover_due(db, rates, broker)
+        incoming = Incoming(body, len(DELAYS))
+        await consume(incoming, db, rates, broker)
+        assert incoming.acked
+        with pytest.raises(Problem) as outage:
+            await recover_due(db, rates, broker)
+        assert outage.value.code == "rate_unavailable"
+        broker.publish.assert_not_awaited()
+        async with db() as session:
+            parcel = await session.get(Parcel, data.id)
+            assert parcel.status == "pending" and parcel.delivery_cost_rub is None
+
+        response = httpx.Response(
+            200,
+            json={
+                "Date": "restored",
+                "Valute": {
+                    "USD": {
+                        "Value": 90,
+                        "Nominal": 1,
+                    }
+                },
+            },
+        )
+        broker.publish.side_effect = OSError("no publisher confirm")
+        with pytest.raises(OSError, match="no publisher confirm"):
+            await recover_due(db, rates, broker)
+        broker.publish.side_effect = None
+        broker.publish.reset_mock()
+        await recover_due(db, rates, broker)
+        await recover_due(db, rates, broker)
+        broker.publish.assert_awaited_once()
+        recovered_body, parcel_id = broker.publish.await_args.args
+        assert parcel_id == str(data.id)
+        await consume(Incoming(recovered_body), db, rates, broker)
+        await consume(Incoming(body), db, rates, broker)
+        async with db() as session:
+            parcel = await session.get(Parcel, data.id)
+            assert parcel.status == "calculated" and parcel.recover_after is None
+            assert parcel.rate_date == "restored" and parcel.delivery_cost_rub == Decimal("180")
+            assert await session.scalar(select(func.count()).select_from(Outbox)) == 1

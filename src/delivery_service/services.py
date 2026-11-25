@@ -179,9 +179,9 @@ class Parcels:
             query = query.where(Parcel.type_id == type_id)
         if calculated is not None:
             query = query.where(
-                Parcel.delivery_cost_rub.is_not(None)
+                Parcel.status == "calculated"
                 if calculated
-                else Parcel.delivery_cost_rub.is_(None)
+                else Parcel.status.in_(("pending", "failed"))
             )
         if cursor:
             try:
