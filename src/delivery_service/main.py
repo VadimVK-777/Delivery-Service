@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -37,7 +36,6 @@ class Resources:
     def __init__(self, settings: Settings) -> None:
         self.engine, self.db = database(settings.database_url)
         self.redis = Redis.from_url(settings.redis_url, decode_responses=True)
-        self.http = httpx.AsyncClient(timeout=5)
         self.broker = Broker(settings)
         self.parcels = Parcels(
             self.db, self.redis, self.broker, settings.session_secret.get_secret_value()
@@ -50,7 +48,6 @@ class Resources:
     async def close(self) -> None:
         await self.support.close()
         await self.broker.close()
-        await self.http.aclose()
         await self.redis.aclose()
         await self.engine.dispose()
 

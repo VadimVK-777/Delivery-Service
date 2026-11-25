@@ -33,8 +33,10 @@ class Sessions:
         except BadSignature, SignatureExpired, ValueError:
             return None
 
-    def initialize(self, request: Request, response: Response) -> UUID:
-        owner = self.read(request) or uuid4()
+    def get_or_create_owner(self, request: Request) -> UUID:
+        return self.read(request) or uuid4()
+
+    def set_cookie(self, response: Response, owner: UUID) -> None:
         response.set_cookie(
             COOKIE,
             self.signer.dumps(str(owner)),
@@ -44,7 +46,6 @@ class Sessions:
             samesite="lax",
         )
         response.headers["Cache-Control"] = "no-store"
-        return owner
 
     def csrf(self, owner: UUID) -> str:
         return hmac.new(

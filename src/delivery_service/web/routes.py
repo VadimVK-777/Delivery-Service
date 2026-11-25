@@ -15,20 +15,11 @@ def create_router(security: Sessions, templates: Jinja2Templates) -> APIRouter:
 
     @router.get("/", response_class=HTMLResponse)
     async def home(request: Request) -> Response:
-        response = templates.TemplateResponse(request=request, name="index.html", context={})
-        owner = security.initialize(request, response)
+        owner = security.get_or_create_owner(request)
         response = templates.TemplateResponse(
             request=request, name="index.html", context={"csrf": security.csrf(owner)}
         )
-        # Set the same signed session used to render the CSRF token.
-        response.set_cookie(
-            "delivery_session",
-            security.signer.dumps(str(owner)),
-            httponly=True,
-            samesite="lax",
-            secure=security.settings.cookie_secure,
-            max_age=security.settings.session_ttl,
-        )
+        security.set_cookie(response, owner)
         return response
 
     @router.get("/web/parcels", response_class=HTMLResponse)

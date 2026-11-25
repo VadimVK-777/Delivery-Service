@@ -29,7 +29,8 @@ def create_router(security: Sessions) -> APIRouter:
 
     @router.get("/session", tags=["Session"])
     async def session_info(request: Request, response: Response) -> dict[str, str]:
-        owner = security.initialize(request, response)
+        owner = security.get_or_create_owner(request)
+        security.set_cookie(response, owner)
         return {"csrf_token": security.csrf(owner)}
 
     @router.get("/parcel-types", tags=["Parcels"])

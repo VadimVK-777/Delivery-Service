@@ -1,13 +1,16 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import pytest
+from jinja2 import Template
 from redis.exceptions import ConnectionError as RedisConnectionError
 
 from delivery_service.db import Parcel
 from delivery_service.schemas import Answer, ParcelMessage
+from delivery_service.security import COOKIE
 
 DATA = {"name": "Laptop", "weight_kg": "2", "type_id": 2, "declared_value_usd": "100"}
 
@@ -166,6 +169,23 @@ async def test_support_limit(client: Any, csrf: Any, resources: Any) -> None:
     assert (
         await client.post("/api/v1/support/questions", json={"question": "Ноутбук?"}, headers=csrf)
     ).status_code == 429
+
+
+async def test_home_renders_once_and_reuses_session(client: Any) -> None:
+    with patch.object(Template, "render", autospec=True, side_effect=Template.render) as render:
+        first = await client.get("/")
+        render.assert_called_once()
+        render.reset_mock()
+        second = await client.get("/")
+        render.assert_called_once()
+
+    token = (await client.get("/api/v1/session")).json()["csrf_token"]
+    for page in (first, second):
+        assert page.status_code == 200
+        assert page.cookies[COOKIE]
+        assert len(page.headers.get_list("set-cookie")) == 1
+        assert page.headers["cache-control"] == "no-store"
+        assert f'<meta name="csrf-token" content="{token}">' in page.text
 
 
 async def test_html_health_and_metrics(client: Any, csrf: Any, resources: Any) -> None:
