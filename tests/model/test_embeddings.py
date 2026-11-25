@@ -2,10 +2,8 @@
 
 import os
 from typing import Any
-from unittest.mock import patch
 
 import pytest
-from qdrant_client import QdrantClient
 
 from delivery_service.rag import Support
 
@@ -13,8 +11,8 @@ from delivery_service.rag import Support
 async def test_pinned_model_indexes_and_retrieves(redis: Any, settings: Any) -> None:
     if os.getenv("RUN_MODEL_TEST") != "1":
         pytest.skip("Set RUN_MODEL_TEST=1 to download and verify the pinned embedding model")
-    with patch("delivery_service.rag.QdrantClient", return_value=QdrantClient(":memory:")):
-        support = Support(settings, redis)
+    settings.qdrant_url = ":memory:"
+    support = Support(settings, redis)
     try:
         version = await support.index()
         assert version == await support.index()
@@ -23,7 +21,7 @@ async def test_pinned_model_indexes_and_retrieves(redis: Any, settings: Any) -> 
             ("Можно ли отправить ноутбук?", "Ноутбук"),
             ("Какой максимальный вес посылки?", "30"),
         ]:
-            result = support.client.query_points(
+            result = await support.client.query_points(
                 support.collection,
                 query=embeddings.embed_query(question),
                 limit=2,

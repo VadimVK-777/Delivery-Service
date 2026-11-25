@@ -1423,26 +1423,6 @@ files = [
 typing-extensions = ">=4.13.0,<5.0.0"
 
 [[package]]
-name = "langchain-qdrant"
-version = "1.1.0"
-description = "An integration package connecting Qdrant and LangChain"
-optional = false
-python-versions = "<4.0.0,>=3.10.0"
-groups = ["main"]
-files = [
-    {file = "langchain_qdrant-1.1.0-py3-none-any.whl", hash = "sha256:546c5c9aa57f543dbcee07343f730c331e4ec2af2ec55b541010af08d872bf35"},
-    {file = "langchain_qdrant-1.1.0.tar.gz", hash = "sha256:433236845736f973543ac6b7137f9d7fa511b7539373fbc6565c581d3ba59373"},
-]
-
-[package.dependencies]
-langchain-core = ">=1.0.0,<2.0.0"
-pydantic = ">=2.7.4,<3.0.0"
-qdrant-client = ">=1.15.1,<2.0.0"
-
-[package.extras]
-fastembed = ["fastembed (>=0.3.3,<1.0.0) ; python_version < \"3.13\" and python_version >= \"3.9\""]
-
-[[package]]
 name = "langsmith"
 version = "0.15.0"
 description = "Client library to connect to the LangSmith Observability and Evaluation Platform."
@@ -4917,4 +4897,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.14,<3.15"
-content-hash = "37fbe9ebdfed4baf2984cc2e5bc887e9d1f3cf6763243c2e10d75f42869cfef2"
+content-hash = "38a64b26fc8259de6fc92236a7672e6091dc096527ca48f4399c87afa80074d1"
