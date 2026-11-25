@@ -8,8 +8,10 @@ from uuid import UUID, uuid4
 import pytest
 from jinja2 import Template
 from redis.exceptions import ConnectionError as RedisConnectionError
+from starlette.exceptions import HTTPException
 
 from delivery_service.db import Parcel, ParcelType
+from delivery_service.observability import JsonFormatter
 from delivery_service.schemas import Answer, ParcelMessage
 from delivery_service.security import COOKIE
 from delivery_service.services import PARCEL_TYPES_KEY, PARCEL_TYPES_TTL
@@ -48,6 +50,32 @@ async def owner_from_registration(client: Any, csrf: Any, resources: Any) -> UUI
     response = await client.post("/api/v1/parcels", json=DATA, headers=csrf)
     assert response.status_code == 202
     return ParcelMessage.model_validate_json(resources.broker.publish.call_args.args[0]).owner_id
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "route", "status"),
+    [
+        ("GET", "/health/live", "/health/live", 200),
+        (
+            "POST",
+            "/api/v1/parcels/bad-id/assignment-token",
+            "/api/v1/parcels/{parcel_id}/assignment-token",
+            422,
+        ),
+        ("GET", "/missing", "unmatched", 404),
+    ],
+)
+async def test_http_request_log(
+    client: Any, caplog: pytest.LogCaptureFixture, method: str, path: str, route: str, status: int
+) -> None:
+    response = await client.request(method, path, params={"token": "private-query-value"})
+    assert response.status_code == status
+    (record,) = [record for record in caplog.records if record.getMessage() == "http_request"]
+    entry = json.loads(JsonFormatter().format(record))
+    assert (entry["method"], entry["route"], entry["status"]) == (method, route, status)
+    assert entry["path"] == path and entry["status_code"] == status
+    assert entry["request_id"] == response.headers["X-Request-ID"]
+    assert "private-query-value" not in json.dumps(entry)
 
 
 async def test_session_csrf_and_types(client: Any) -> None:
@@ -115,9 +143,18 @@ async def test_registration_idempotency_and_privacy(client: Any, csrf: Any, reso
     assert (await client.get(first.json()["status_url"])).status_code == 404
 
 
-async def test_publish_failure_retry_keeps_id(client: Any, csrf: Any, resources: Any) -> None:
+async def test_publish_failure_retry_keeps_id(
+    client: Any, csrf: Any, resources: Any, caplog: pytest.LogCaptureFixture
+) -> None:
     resources.broker.publish.side_effect = OSError("offline")
-    assert (await client.post("/api/v1/parcels", json=DATA, headers=csrf)).status_code == 503
+    failure = await client.post("/api/v1/parcels", json=DATA, headers=csrf)
+    assert failure.status_code == 503
+    (record,) = [r for r in caplog.records if r.getMessage() == "broker_unavailable"]
+    error = json.loads(JsonFormatter().format(record))
+    assert error["level"] == "ERROR"
+    assert error["request_id"] == failure.headers["X-Request-ID"]
+    assert "OSError: offline" in error["traceback"]
+    assert "offline" not in failure.text
     first = resources.broker.publish.call_args.args[1]
     resources.broker.publish.side_effect = None
     response = await client.post("/api/v1/parcels", json=DATA, headers=csrf)
@@ -274,13 +311,68 @@ async def test_html_health_and_metrics(client: Any, csrf: Any, resources: Any) -
     assert (await client.get(f"/parcels/{parcel_id}")).status_code == 200
 
 
-@pytest.mark.parametrize("exception", [RedisConnectionError("offline"), RuntimeError("unexpected")])
+@pytest.mark.parametrize(
+    ("error_type", "status", "event"),
+    [(RedisConnectionError, 503, "dependency_unavailable"), (RuntimeError, 500, "unhandled_error")],
+)
 async def test_internal_errors_redacted(
-    client: Any, csrf: Any, resources: Any, exception: Exception
+    client: Any,
+    resources: Any,
+    caplog: pytest.LogCaptureFixture,
+    error_type: type[Exception],
+    status: int,
+    event: str,
 ) -> None:
-    from unittest.mock import AsyncMock
+    error = error_type("Connection refused: redis://app:secret-pass@redis:6379/0?token=url-secret")
+    resources.redis.ping = AsyncMock(side_effect=error)
+    result = await client.get("/health/ready?token=request-secret")
+    assert result.status_code == status
+    request_id = result.headers["X-Request-ID"]
+    assert request_id == result.json()["request_id"]
+    assert "Connection refused" not in result.text
 
-    resources.parcels.list = AsyncMock(side_effect=exception)
-    result = await client.get("/api/v1/parcels")
-    assert result.status_code in (500, 503)
-    assert "offline" not in result.text and "unexpected" not in result.text
+    logs = {
+        record.getMessage(): json.loads(JsonFormatter().format(record))
+        for record in caplog.records
+        if record.name == "delivery_service.main"
+    }
+    for entry in (logs[event], logs["http_request"]):
+        assert entry["request_id"] == request_id
+        assert entry["method"] == "GET" and entry["path"] == "/health/ready"
+    assert logs["http_request"]["status_code"] == status
+    assert logs["http_request"]["status"] == status
+    assert logs["http_request"]["route"] == "/health/ready"
+    assert logs[event]["exception_type"] == error_type.__name__
+    assert logs[event]["exception_message"] == "Connection refused: redis://***@redis:6379/0"
+    assert "Traceback (most recent call last)" in logs[event]["traceback"]
+    assert "in ready" in logs[event]["traceback"]
+    for secret in ("secret-pass", "url-secret", "request-secret"):
+        assert secret not in json.dumps(logs)
+
+
+async def test_wrapped_dependency_error_logs_cause(
+    client: Any, resources: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    resources.broker.connect.side_effect = OSError("connection refused on rabbitmq:5672")
+    result = await client.get("/health/ready")
+    assert result.status_code == 503
+    record = next(r for r in caplog.records if r.getMessage() == "broker_unavailable")
+    entry = json.loads(JsonFormatter().format(record))
+    assert entry["request_id"] == result.headers["X-Request-ID"]
+    assert "OSError: connection refused on rabbitmq:5672" in entry["traceback"]
+    assert "connection refused" not in result.text
+
+
+async def test_http_exception_logs_server_error(
+    client: Any, resources: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    resources.redis.ping = AsyncMock(side_effect=HTTPException(503, "Temporarily unavailable"))
+    result = await client.get("/health/ready")
+    assert result.status_code == 503
+    record = next(r for r in caplog.records if r.getMessage() == "http_error")
+    error = json.loads(JsonFormatter().format(record))
+    assert error["request_id"] == result.headers["X-Request-ID"]
+    assert error["method"] == "GET" and error["path"] == "/health/ready"
+    assert error["exception_type"] == "HTTPException"
+    assert "Temporarily unavailable" in error["exception_message"]
+    assert "in ready" in error["traceback"]

@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -10,6 +11,7 @@ from sqlalchemy import func, select
 from delivery_service.broker import DELAYS, DLQ
 from delivery_service.db import Outbox, Parcel, utcnow
 from delivery_service.domain import Problem
+from delivery_service.observability import JsonFormatter
 from delivery_service.rates import Rates
 from delivery_service.schemas import ParcelInput, ParcelMessage
 from delivery_service.worker import calculate, consume, recover_due
@@ -101,12 +103,18 @@ class Incoming:
         return context()
 
 
-async def test_retry_confirm_before_ack(db: Any) -> None:
+async def test_retry_confirm_before_ack(db: Any, caplog: pytest.LogCaptureFixture) -> None:
     data = message()
     incoming = Incoming(data.model_dump_json().encode())
     broker = AsyncMock()
     with patch("delivery_service.worker.calculate", side_effect=OSError("offline")):
         await consume(incoming, db, AsyncMock(), broker)
+    record = next(record for record in caplog.records if record.getMessage() == "calculation_retry")
+    entry = json.loads(JsonFormatter().format(record))
+    assert entry["parcel_id"] == str(data.id) and entry["attempt"] == 0
+    assert entry["exception_type"] == "OSError"
+    assert entry["exception_message"] == "offline"
+    assert "in consume" in entry["traceback"]
     assert incoming.acked
     assert broker.publish.call_args.kwargs["attempt"] == 1
     incoming.acked = False

@@ -93,6 +93,8 @@ def create_app(settings: Settings | None = None, resources: Any = None) -> FastA
 
     @app.exception_handler(Problem)
     async def problem_handler(request: Request, error: Problem) -> JSONResponse:
+        if error.status >= 500:
+            logger.error(error.code, exc_info=error, extra=request.state.log_context)
         return problem_response(request, error)
 
     @app.exception_handler(RequestValidationError)
@@ -105,6 +107,8 @@ def create_app(settings: Settings | None = None, resources: Any = None) -> FastA
 
     @app.exception_handler(HTTPException)
     async def http_handler(request: Request, error: HTTPException) -> JSONResponse:
+        if error.status_code >= 500:
+            logger.error("http_error", exc_info=error, extra=request.state.log_context)
         return problem_response(
             request, Problem(error.status_code, "http_error", str(error.detail))
         )
@@ -114,16 +118,21 @@ def create_app(settings: Settings | None = None, resources: Any = None) -> FastA
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         request.state.request_id = str(uuid4())
+        request.state.log_context = {
+            "request_id": request.state.request_id,
+            "method": request.method,
+            "path": request.scope["path"],
+        }
         start = time.monotonic()
         try:
             response = await call_next(request)
         except RedisError, SQLAlchemyError:
-            logger.exception("dependency_unavailable")
+            logger.exception("dependency_unavailable", extra=request.state.log_context)
             response = problem_response(
                 request, Problem(503, "dependency_unavailable", "Сервис временно недоступен")
             )
         except Exception:
-            logger.exception("unhandled_error")
+            logger.exception("unhandled_error", extra=request.state.log_context)
             response = problem_response(
                 request, Problem(500, "internal_error", "Внутренняя ошибка")
             )
@@ -136,7 +145,13 @@ def create_app(settings: Settings | None = None, resources: Any = None) -> FastA
         response.headers["Cache-Control"] = "no-store"
         logger.info(
             "http_request",
-            extra={"request_id": request.state.request_id, "duration_ms": round(elapsed * 1000)},
+            extra={
+                **request.state.log_context,
+                "route": route,
+                "status": response.status_code,
+                "status_code": response.status_code,
+                "duration_ms": round(elapsed * 1000),
+            },
         )
         return response
 

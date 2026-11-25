@@ -116,7 +116,9 @@ async def consume(
         except Exception as exc:
             attempt = int(str(incoming.headers.get("attempt", 0)))
             logger.warning(
-                "calculation_retry", extra={"parcel_id": str(message.id), "attempt": attempt}
+                "calculation_retry",
+                exc_info=True,
+                extra={"parcel_id": str(message.id), "attempt": attempt},
             )
             if attempt < len(DELAYS):
                 await broker.publish(
