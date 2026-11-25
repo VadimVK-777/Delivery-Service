@@ -120,7 +120,7 @@ def create_app(settings: Settings | None = None, resources: Any = None) -> FastA
         start = time.monotonic()
         try:
             response = await call_next(request)
-        except (RedisError, SQLAlchemyError):
+        except RedisError, SQLAlchemyError:
             logger.exception("dependency_unavailable")
             response = problem_response(
                 request, Problem(503, "dependency_unavailable", "Сервис временно недоступен")

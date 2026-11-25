@@ -1,7 +1,7 @@
 # Delivery Service
 
 Асинхронная регистрация международных посылок, расчёт стоимости, RAG-поддержка и отчётность.
-Python 3.12 · FastAPI · Poetry · PostgreSQL · RabbitMQ · Redis · MongoDB · Qdrant.
+Python 3.14 · FastAPI · Poetry · PostgreSQL · RabbitMQ · Redis · MongoDB · Qdrant.
 
 Отправитель регистрирует посылку и видит цену доставки в рублях. Перевозчик получает от
 отправителя ключ и закрепляет посылку за компанией через API. Оператор сверяет дневные итоги.
@@ -19,12 +19,12 @@ Python 3.12 · FastAPI · Poetry · PostgreSQL · RabbitMQ · Redis · MongoDB �
 docker compose up -d --build
 ```
 
-Для локальной разработки используются Python 3.12 и Poetry 2.5.1. Следующие команды
+Для локальной разработки используются Python 3.14 и Poetry 2.5.1. Следующие команды
 установят зависимости и Git-хуки. Если файла `.env` ещё нет, его можно создать
 командой `poetry run python scripts/init_env.py` — скрипт сам сгенерирует секрет.
 
 ```shell
-poetry env use 3.12
+poetry env use 3.14
 poetry install --with dev
 poetry run pre-commit install
 ```

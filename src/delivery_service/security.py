@@ -30,7 +30,7 @@ class Sessions:
                 request.cookies.get(COOKIE, ""), max_age=self.settings.session_ttl
             )
             return UUID(str(value))
-        except (BadSignature, SignatureExpired, ValueError):
+        except BadSignature, SignatureExpired, ValueError:
             return None
 
     def initialize(self, request: Request, response: Response) -> UUID:

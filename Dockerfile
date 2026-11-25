@@ -1,4 +1,4 @@
-FROM python:3.12.10-slim-bookworm AS base
+FROM python:3.14.10-slim-bookworm AS base
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 POETRY_VIRTUALENVS_CREATE=false
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/*

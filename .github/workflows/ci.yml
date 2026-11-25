@@ -4,12 +4,12 @@ permissions:
   contents: read
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: {python-version: '3.12'}
+        with: {python-version: '3.14'}
       - run: pip install poetry==2.5.1
       - run: poetry install --with dev
       - run: poetry check --lock
@@ -18,11 +18,11 @@ jobs:
       - run: make metrics
       - run: poetry run pre-commit run --all-files
   integration:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: {python-version: '3.12'}
+        with: {python-version: '3.14'}
       - run: python scripts/integration.py
       - run: docker build --target production -t delivery-service:ci .

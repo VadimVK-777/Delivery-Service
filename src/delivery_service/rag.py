@@ -213,7 +213,7 @@ class Support:
                     return Answer(answer=INSUFFICIENT_INFORMATION, sources=[])
                 try:
                     selection = EvidenceSelection.model_validate_json(result.content)
-                except (ValidationError, TypeError):
+                except ValidationError, TypeError:
                     return Answer(answer=INSUFFICIENT_INFORMATION, sources=[])
                 sources = list(dict.fromkeys(selection.sources))
                 if not sources or any(source not in evidence for source in sources):
